@@ -17,7 +17,10 @@ const admin = createClient(
 export type TestUser = { id: string; email: string };
 
 /** Create a real GoTrue user + matching profile row. Returns the user id. */
-export async function createTestUser(label: string): Promise<TestUser> {
+export async function createTestUser(
+  label: string,
+  role: "tutor" | "student" = "tutor",
+): Promise<TestUser> {
   const email = `${label}-${Date.now()}-${Math.random()
     .toString(36)
     .slice(2, 8)}@test.local`;
@@ -33,7 +36,7 @@ export async function createTestUser(label: string): Promise<TestUser> {
 
   await db
     .insert(profiles)
-    .values({ id: data.user.id, email })
+    .values({ id: data.user.id, email, role })
     .onConflictDoNothing({ target: profiles.id });
 
   return { id: data.user.id, email };

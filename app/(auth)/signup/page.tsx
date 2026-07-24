@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { getAuthUser } from "@/lib/auth/session";
+import { getAuthUser, getProfile } from "@/lib/auth/session";
+import { homeForRole } from "@/lib/auth/roles";
 import { SignupForm } from "@/components/signup-form";
 import {
   Card,
@@ -10,7 +11,8 @@ import {
 } from "@/components/ui/card";
 
 export default async function SignupPage() {
-  if (await getAuthUser()) redirect("/dashboard");
+  const user = await getAuthUser();
+  if (user) redirect(homeForRole((await getProfile(user.id))?.role));
 
   return (
     <main className="flex min-h-screen items-center justify-center p-4">

@@ -1,0 +1,13 @@
+<!-- TutorOS invite email. The link goes to our /auth/confirm route (token_hash
+     flow) which verifies the invite server-side, sets the session cookie, then
+     redirects to the accept page carried in `next` (= .RedirectTo). -->
+<h2>You've been invited to TutorOS</h2>
+<p>Your tutor has invited you to their class. Tap the button below to set a
+   password and join.</p>
+<p>
+  <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite&next={{ .RedirectTo }}"
+     style="display:inline-block;padding:10px 16px;background:#2b3a67;color:#fff;border-radius:6px;text-decoration:none">
+    Accept invitation
+  </a>
+</p>
+<p style="color:#666;font-size:12px">If you weren’t expecting this, you can ignore this email.</p>

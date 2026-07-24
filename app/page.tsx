@@ -1,6 +1,10 @@
 import { redirect } from "next/navigation";
+import { getAuthUser, getProfile } from "@/lib/auth/session";
+import { homeForRole } from "@/lib/auth/roles";
 
-export default function Home() {
-  // The app is dashboard-first; auth gating happens there.
-  redirect("/dashboard");
+export default async function Home() {
+  const user = await getAuthUser();
+  if (!user) redirect("/login");
+  const profile = await getProfile(user.id);
+  redirect(homeForRole(profile?.role));
 }

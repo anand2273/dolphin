@@ -24,16 +24,20 @@ Auth. Mitigated by routing *all* auth through `lib/auth` so nothing else reads
 **Current call:** hard FK for v1. **Reversal cost:** medium (one table + backfill),
 localized.
 
-## 3. Role is CONTEXTUAL, derived from relationships (your call — resolved)
-No stored `role`. A user is a "tutor" of classes they own and a "student" of
-classes they're enrolled in; the same account can be both and switch UIs. Any
-authenticated user can create a class (becoming its tutor); becoming a student
-still requires accepting an invite. `profiles.role` and the `user_role` enum are
-removed. The authz helper answers capability purely from relationships.
-**Consequence:** the UI needs a context switch and a sensible default landing
-(e.g. "you own classes" → tutor view; "only enrolled" → student view). No schema
-support needed for that; a `preferred_context` preference can be added later if
-the default heuristic isn't enough.
+## 3. Role is GLOBAL and strictly separated (reversed in CP3 for monetization)
+`profiles.role` is `'tutor' | 'student'`, fixed at account creation:
+**self-signup → tutor** (the paying account), **invite acceptance → student**
+(invited, low-privilege). Students can never self-register and never see the
+tutor UI; a tutor's email can't be added as a student (blocked). This is the
+monetization boundary — the thing you sell is tutor access — and it realigns
+with CLAUDE.md's "Tutor = the paying user."
+Two authz layers: **role** (coarse: which half of the app, can-create-class,
+billing) sits above the existing **relationship** check (fine: owner/enrolled/
+none for a specific resource). Profile-less authenticated users default to the
+low-privilege student home — we never mint a tutor by accident.
+*(This reverses the CP1 "contextual roles" decision, which had drifted from
+CLAUDE.md; the flexibility of one person being both a tutor and a student is
+intentionally dropped for v1.)*
 
 ## 4. `sessions.status` removed — planned/delivered derived from `scheduled_at`
 Your call. `scheduled_at > now()` => planned, else delivered. Nothing stored.

@@ -17,10 +17,11 @@ class id, session id or student id from the client is trusted.
 Cells: **✔** allow · **✘** deny.
 "own" = the row's `student_id` / uploader is the acting user.
 
-**Roles are contextual, not global.** The same account can be the **Tutor** of
-one class and an **Enrolled student** of another; there is no stored `role`.
-Every row is evaluated against the *specific resource*, so a person reads a
-column based on their relationship to *that* class, not a fixed identity.
+**Roles are global.** Every account is either a **tutor** (paying, self-signup)
+or a **student** (invited, low-privilege), fixed at creation via `profiles.role`.
+This is the coarse gate (which half of the app you can reach + the billing
+boundary). On top of it, each row is still evaluated against the *specific
+resource* via the relationship check (owner / enrolled / none).
 
 ## Matrix
 
@@ -32,7 +33,7 @@ column based on their relationship to *that* class, not a fixed identity.
 | 3 | View / edit **own** profile | ✔ | ✔ | ✔ | ✘ |
 | 4 | Self-register as a student (no invite) | ✘ | ✘ | ✘ | ✘ (invite-only) |
 | **Class** |
-| 5 | Create class (becomes its tutor) | ✔ | ✔ ⁶ | ✔ ⁶ | ✘ (unauth) |
+| 5 | Create class | ✔ | ✘ | ✘ | ✘ |
 | 6 | View class (list / detail) | ✔ | ✔ | ✘ | ✘ |
 | 7 | Edit class (name, subject) | ✔ | ✘ | ✘ | ✘ |
 | 8 | Soft-delete class | ✔ | ✘ | ✘ | ✘ |
@@ -83,16 +84,13 @@ column based on their relationship to *that* class, not a fixed identity.
    the actor must prove control of that email (Supabase auth). Forwarding the
    link enrolls nobody new. A pending, unexpired, unrevoked invite is required.
 3. Rows 28/30/31 ("own" submission) apply to whoever the submission's
-   `student_id` is. Because roles are contextual, a user who is a tutor of their
-   own classes may simultaneously be an enrolled student — and the owner — of a
-   submission in someone else's class; there they act with student capability.
+   `student_id` is. Roles are global and strictly separated: a tutor account is
+   never also an enrolled student (inviting a tutor's email as a student is
+   blocked), so "own submission" always belongs to a student account.
 4. The tutor can read **all** submissions **in their own class** (rows 32/33).
    A tutor of a *different* class is a **Stranger** here → ✘.
 5. Submissions are **append-only**; "delete" is a tutor-only soft-delete for
    accidental-upload cleanup. Students cannot delete or overwrite submitted work.
-6. Any authenticated user may create a class and thereby *become* its tutor —
-   there is no separate "tutor" account type. The ✔ for enrolled/other students
-   just reflects that they, too, are authenticated users who can own classes.
 
 ## The two questions the helper asks on every request
 

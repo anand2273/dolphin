@@ -63,9 +63,11 @@ const softDelete = {
 /* Enums                                                                       */
 /* -------------------------------------------------------------------------- */
 
-// NOTE: no global `role` enum. Roles are CONTEXTUAL, derived from
-// relationships — a user is a "tutor" of classes they own and a "student" of
-// classes they're enrolled in. One account can be both and switch UIs.
+// Global account role. `tutor` = the paying user, created by self-signup;
+// `student` = invited, very low-privilege, created only by accepting an invite.
+// Fixed for the account's lifetime — this boundary is the monetization boundary
+// and the coarse authorization gate (which half of the app you can reach).
+export const userRole = pgEnum("user_role", ["tutor", "student"]);
 
 // NOTE: no `session_status` enum. planned-vs-delivered is DERIVED from
 // scheduled_at vs now(); it is not stored. Cancellation, if ever needed, would
@@ -102,7 +104,10 @@ export const profiles = pgTable("profiles", {
   id: uuid("id")
     .primaryKey()
     .references(() => authUsers.id, { onDelete: "cascade" }),
-  // No stored role — capability is derived from relationships (see enums note).
+  // Coarse capability + billing boundary. Defaults to 'tutor' so self-signup
+  // (and any existing backfilled account) is a tutor; the invite path sets
+  // 'student' explicitly.
+  role: userRole("role").notNull().default("tutor"),
   fullName: text("full_name"),
   // Mirror of auth email, lower-cased, kept for invite matching & joins.
   // auth.users.email remains the source of truth.

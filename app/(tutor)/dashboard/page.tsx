@@ -1,5 +1,5 @@
-import { requireAuthUser, getProfile } from "@/lib/auth/session";
-import { ensureProfile } from "@/lib/auth/ensure-profile";
+import Link from "next/link";
+import { requireTutor } from "@/lib/auth/guards";
 import { listClassesForTutor } from "@/lib/db/queries/classes";
 import { signOut } from "@/app/(auth)/actions";
 import { CreateClassForm } from "@/components/create-class-form";
@@ -13,9 +13,7 @@ import {
 } from "@/components/ui/card";
 
 export default async function DashboardPage() {
-  const user = await requireAuthUser();
-  await ensureProfile(user);
-  const profile = await getProfile(user.id);
+  const { user, profile } = await requireTutor();
   const classes = await listClassesForTutor(user.id);
 
   return (
@@ -24,7 +22,7 @@ export default async function DashboardPage() {
         <div>
           <h1 className="text-2xl font-semibold">Your classes</h1>
           <p className="text-sm text-muted-foreground">
-            Signed in as {profile?.fullName ?? user.email}
+            Signed in as {profile.fullName ?? user.email}
           </p>
         </div>
         <form action={signOut}>
@@ -36,6 +34,7 @@ export default async function DashboardPage() {
 
       <section className="grid gap-6 md:grid-cols-[1fr_320px]">
         <div className="space-y-3">
+          <h2 className="text-sm font-medium text-muted-foreground">Teaching</h2>
           {classes.length === 0 ? (
             <Card>
               <CardContent className="p-6 text-sm text-muted-foreground">
@@ -44,14 +43,16 @@ export default async function DashboardPage() {
             </Card>
           ) : (
             classes.map((klass) => (
-              <Card key={klass.id}>
-                <CardHeader>
-                  <CardTitle className="text-base">{klass.name}</CardTitle>
-                  {klass.subject && (
-                    <CardDescription>{klass.subject}</CardDescription>
-                  )}
-                </CardHeader>
-              </Card>
+              <Link key={klass.id} href={`/classes/${klass.id}`} className="block">
+                <Card className="transition-colors hover:border-ring">
+                  <CardHeader>
+                    <CardTitle className="text-base">{klass.name}</CardTitle>
+                    {klass.subject && (
+                      <CardDescription>{klass.subject}</CardDescription>
+                    )}
+                  </CardHeader>
+                </Card>
+              </Link>
             ))
           )}
         </div>

@@ -3,8 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db/client";
 import { classes } from "@/lib/db/schema";
-import { requireAuthUser } from "@/lib/auth/session";
-import { ensureProfile } from "@/lib/auth/ensure-profile";
+import { requireAuthUser, getProfile } from "@/lib/auth/session";
+import { assertTutor } from "@/lib/auth/roles";
 import { recordEvent } from "@/lib/db/events";
 import { createClassSchema } from "@/lib/validation/class";
 import type { FormState } from "@/lib/types";
@@ -23,10 +23,14 @@ export async function createClass(
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  // 2. authorize — any authenticated user may create a class and becomes its
-  // tutor. (Roles are contextual; this is the only class action open to all.)
+  // 2. authorize — TUTORS ONLY. Students can never create classes.
   const user = await requireAuthUser();
-  await ensureProfile(user);
+  const profile = await getProfile(user.id);
+  try {
+    assertTutor(profile?.role);
+  } catch {
+    return { error: "Only tutors can create classes." };
+  }
 
   // 3. mutate (row + its event, atomically)
   await db.transaction(async (tx) => {

@@ -3,6 +3,8 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/auth/supabase-server";
 import { ensureProfile } from "@/lib/auth/ensure-profile";
+import { getProfile } from "@/lib/auth/session";
+import { homeForRole } from "@/lib/auth/roles";
 import { logInSchema, signUpSchema } from "@/lib/validation/auth";
 import type { FormState } from "@/lib/types";
 
@@ -28,9 +30,11 @@ export async function signUp(
   if (error) return { error: error.message };
   if (!data.user) return { error: "Sign up failed. Please try again." };
 
-  // Second half of the dual-write: create the domain profile row.
+  // Second half of the dual-write: self-signup always creates a TUTOR (the
+  // paying account). Students are created only via invite acceptance.
   await ensureProfile(
     { id: data.user.id, email: parsed.data.email },
+    "tutor",
     parsed.data.fullName,
   );
 
@@ -50,13 +54,14 @@ export async function logIn(
   }
 
   const supabase = await createSupabaseServerClient();
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email: parsed.data.email,
     password: parsed.data.password,
   });
   if (error) return { error: "Incorrect email or password." };
 
-  redirect("/dashboard");
+  const profile = data.user ? await getProfile(data.user.id) : null;
+  redirect(homeForRole(profile?.role));
 }
 
 export async function signOut() {
