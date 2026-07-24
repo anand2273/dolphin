@@ -1,0 +1,132 @@
+TutorOS — v1 ERD (plain text)
+=============================
+
+Legend:  PK = primary key   FK -> = foreign key   (sd) = has soft-delete (deleted_at)
+         [1:1] [1:N] [N:M] = cardinality from the LEFT table's perspective
+         Session is the organising unit — every material/assignment/submission
+         hangs off exactly one session.
+
+
+IDENTITY
+--------
+
+  auth.users (Supabase-owned, NOT migrated by us)
+    PK id
+      |
+      | 1:1
+      v
+  profiles (sd)
+    PK id  FK-> auth.users.id
+       role (tutor|student)         <- global per account
+       full_name, email
+      |
+      +------------------< owns >------------------+
+      |                                            |
+      | 1:N (as tutor)                             | 1:N (as student, via enrollment)
+      v                                            |
+                                                   |
+CORE DOMAIN                                        |
+-----------                                        |
+                                                   |
+  classes (sd)                                     |
+    PK id                                          |
+    FK-> profiles.id  (tutor_id, one tutor)        |
+       name, subject(free text)                    |
+      |                                            |
+      | 1:N                                        |
+      +--------------------+--------------------+  |
+      |                    |                    |  |
+      v                    v                    |  |
+  enrollments (sd)     invitations (sd)         |  |
+    PK id                PK id                  |  |
+    FK-> classes.id      FK-> classes.id        |  |
+    FK-> profiles.id ----+   email (bound)      |  |
+       (student_id)  <---|-- token_hash         |  |
+    UNIQUE(class,student)|   status             |  |
+                         |   FK-> profiles      |  |
+                         |     (invited_by,     |  |
+                         |      accepted_by)    |  |
+                         +----------------------+--+
+                                                (accepted invite -> enrollment)
+      |
+      | classes 1:N
+      v
+  sessions (sd)                    <=== THE ORGANISING UNIT
+    PK id
+    FK-> classes.id
+       title, scheduled_at (tz-aware), timezone (IANA), status(planned|delivered|cancelled)
+      |
+      +-----------------------+-----------------------+
+      | 1:N                   | 1:N (issued_in)       | 0:N (review_session, nullable)
+      v                       v                       |
+  materials (sd)          assignments (sd) <----------+
+    PK id                   PK id
+    FK-> sessions.id        FK-> sessions.id (issued_in_session_id, required)
+    FK-> attachments.id     FK-> sessions.id (review_session_id, nullable)
+    FK-> profiles           title, instructions, due_at (independent of session)
+       (created_by)         FK-> profiles (created_by)
+      |                        |
+      | material 1:1           | assignment 1:N
+      | attachment             v
+      |                   submissions (sd)   <=== append-only, versioned
+      |                     PK id
+      |                     FK-> assignments.id
+      |                     FK-> profiles.id (student_id  = whose work)
+      |                     FK-> profiles.id (uploaded_by = who created row;
+      |                          may be tutor-on-behalf)
+      |                     version (unique per assignment+student)
+      |                     body_text (text and/or files)
+      |                        |
+      |                        | 1:N
+      |                        v
+      |                   feedback (sd)       <=== AI hook; v1 = tutor rows only
+      |                     PK id
+      |                     FK-> submissions.id
+      |                     author_type(tutor|agent), author_user_id(nullable)
+      |                     body
+      |
+      |   FILE LINKS (all three producers point at ONE attachments table)
+      |   -----------------------------------------------------------------
+      |   materials.attachment_id ..............[1:1]....\
+      |   assignment_attachments (N:M join) .............  \
+      |   submission_attachments (N:M join) .............   >---> attachments
+      |                                                    /
+      v                                                   /
+  attachments (sd)  <---------------------------------- /
+    PK id
+       bucket, object_key (opaque, unique)   <- bytes live in object storage (S3/Supabase)
+       original_filename (metadata only), mime_type, size_bytes
+       FK-> profiles (uploaded_by)           <- tutor OR student
+       extracted_text (nullable)             <- AI hook, no behaviour in v1
+       extraction_status (none|pending|processing|done|failed)
+
+
+AI FORWARD-COMPAT HOOKS (columns/tables only; no behaviour in v1)
+-----------------------------------------------------------------
+
+  topics (sd)                     assignment_topics (join)
+    PK id                           PK (assignment_id, topic_id)
+    FK-> profiles (tutor_id)        FK-> assignments.id
+       name (unique per tutor)      FK-> topics.id
+        \__________________________/  tutor-tagged, optional
+
+  events (append-only; NO soft-delete)
+    PK id
+    FK-> profiles (actor_id, nullable)
+       verb, subject_type, subject_id, payload(jsonb), occurred_at
+    written on: material.uploaded, assignment.issued, submission.submitted, feedback.added
+
+
+CARDINALITY SUMMARY
+-------------------
+  profiles(tutor)  1 --- N  classes
+  profiles(student) N --- N classes            (through enrollments)
+  classes          1 --- N  sessions
+  classes          1 --- N  enrollments / invitations
+  sessions         1 --- N  materials
+  sessions         1 --- N  assignments        (issued_in; review_session is 0..1)
+  assignments      1 --- N  submissions        (append-only versions)
+  submissions      1 --- N  feedback
+  attachments      1 --- N  materials / assignment_attachments / submission_attachments
+  profiles(tutor)  1 --- N  topics
+  assignments      N --- N  topics             (through assignment_topics)

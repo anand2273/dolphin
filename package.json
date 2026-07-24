@@ -1,0 +1,53 @@
+{
+  "name": "tutoros",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "sb:start": "supabase start",
+    "sb:stop": "supabase stop"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.5.2",
+    "@supabase/supabase-js": "^2.47.10",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "drizzle-orm": "^0.45.2",
+    "lucide-react": "^0.469.0",
+    "next": "^15.1.4",
+    "postgres": "^3.4.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^2.6.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1",
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.0.4",
+    "@types/react-dom": "^19.0.2",
+    "autoprefixer": "^10.4.20",
+    "dotenv": "^16.4.7",
+    "drizzle-kit": "^0.30.1",
+    "eslint": "^9.18.0",
+    "eslint-config-next": "^15.1.4",
+    "postcss": "^8.4.49",
+    "supabase": "^2.2.1",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

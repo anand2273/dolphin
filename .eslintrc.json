@@ -1,0 +1,4 @@
+{
+  "extends": "next/core-web-vitals",
+  "ignorePatterns": ["lib/db/migrations/**", "node_modules/**", ".next/**"]
+}
