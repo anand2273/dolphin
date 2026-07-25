@@ -2,8 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAuthUser } from "@/lib/auth/session";
 import { getSessionForViewer } from "@/lib/db/queries/sessions";
+import { listMaterialsForSession } from "@/lib/db/queries/materials";
+import { formatBytes } from "@/lib/storage/config";
 import { SessionDateTime, SessionWhen } from "@/components/session-datetime";
 import { EditSessionPanel } from "@/components/edit-session-panel";
+import { UploadMaterialForm } from "@/components/upload-material-form";
+import { deleteMaterial } from "./actions";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -18,8 +23,8 @@ import {
  * class exactly once, and the tutor-only controls hang off that result. Keeping
  * it as a single route means the read rule cannot drift between two copies.
  *
- * Materials and Assignments are the next checkpoints; their sections are here as
- * empty placeholders so the shape of the page is visible, with no behaviour.
+ * Materials are live (CP5): the tutor uploads, both roles download through the
+ * authorizing route. Homework is CP6 and remains an empty placeholder.
  */
 export default async function SessionPage({
   params,
@@ -35,6 +40,8 @@ export default async function SessionPage({
 
   const { session, klass, relationship } = found;
   const isOwner = relationship === "owner";
+
+  const sessionMaterials = await listMaterialsForSession(user.id, session.id);
 
   return (
     <main className="mx-auto max-w-3xl space-y-8 p-6">
@@ -70,12 +77,66 @@ export default async function SessionPage({
       )}
 
       <section className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground">Materials</h2>
-        <Card>
-          <CardContent className="p-4 text-sm text-muted-foreground">
-            No materials yet.
-          </CardContent>
-        </Card>
+        <h2 className="text-sm font-medium text-muted-foreground">
+          Materials ({sessionMaterials.length})
+        </h2>
+
+        {sessionMaterials.length === 0 ? (
+          <Card>
+            <CardContent className="p-4 text-sm text-muted-foreground">
+              {isOwner
+                ? "No materials yet. Upload one below."
+                : "Your tutor hasn't added any materials to this lesson."}
+            </CardContent>
+          </Card>
+        ) : (
+          sessionMaterials.map((m) => (
+            <Card key={m.materialId}>
+              <CardContent className="flex items-center justify-between gap-4 p-4">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {m.title ?? m.originalFilename}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {m.originalFilename} · {formatBytes(m.sizeBytes)}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {/* Plain link: the route authorizes, then redirects to a
+                      short-lived signed URL. No signed URL is ever rendered
+                      into the page itself. */}
+                  <a
+                    href={`/api/materials/${m.materialId}/download`}
+                    className={buttonVariants({ variant: "outline", size: "sm" })}
+                  >
+                    Download
+                  </a>
+                  {isOwner && (
+                    <form action={deleteMaterial.bind(null, m.materialId)}>
+                      <Button variant="ghost" size="sm" type="submit">
+                        Remove
+                      </Button>
+                    </form>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))
+        )}
+
+        {isOwner && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Add material</CardTitle>
+              <CardDescription>
+                Students in this class can download it.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <UploadMaterialForm sessionId={session.id} />
+            </CardContent>
+          </Card>
+        )}
       </section>
 
       <section className="space-y-3">

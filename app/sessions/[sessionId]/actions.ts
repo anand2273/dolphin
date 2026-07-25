@@ -4,12 +4,28 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { sessions } from "@/lib/db/schema";
+import { attachments, materials, sessions } from "@/lib/db/schema";
 import { requireAuthUser } from "@/lib/auth/session";
 import { assertClassOwner, AuthzError } from "@/lib/auth/authz";
 import { getSessionForViewer } from "@/lib/db/queries/sessions";
+import { getMaterialForViewer } from "@/lib/db/queries/materials";
 import { recordEvent } from "@/lib/db/events";
 import { updateSessionSchema } from "@/lib/validation/session";
+import {
+  confirmUploadSchema,
+  requestUploadSchema,
+} from "@/lib/validation/material";
+import {
+  isAllowedMimeType,
+  MATERIALS_BUCKET,
+  MAX_FILE_BYTES,
+} from "@/lib/storage/config";
+import {
+  createSignedUploadUrl,
+  generateObjectKey,
+  removeObject,
+  statObject,
+} from "@/lib/storage/objects";
 import type { FormState } from "@/lib/types";
 
 /**
@@ -77,6 +93,159 @@ export async function updateSession(
   revalidatePath(`/sessions/${parsed.data.sessionId}`);
   revalidatePath(`/classes/${owned.session.classId}`);
   return { ok: true };
+}
+
+export type UploadTicket =
+  | { ok: true; objectKey: string; signedUrl: string; token: string }
+  | { ok: false; error: string };
+
+/**
+ * Step 1 of 3: authorize, sanity-check the CLAIMED file metadata, and hand back
+ * a short-lived signed URL the browser can PUT to. Nothing is written to the
+ * database here — an abandoned upload leaves only an orphan object, never a row.
+ *
+ * The claims checked here are not trusted afterwards; see confirmMaterialUpload.
+ */
+export async function requestMaterialUpload(input: {
+  sessionId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+}): Promise<UploadTicket> {
+  // 1. parse
+  const parsed = requestUploadSchema.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid file" };
+  }
+
+  // 2. authorize — only the class owner may attach materials to its sessions.
+  let owned;
+  try {
+    owned = await ownedSession(parsed.data.sessionId);
+  } catch (e) {
+    if (e instanceof AuthzError) return { ok: false, error: "Not authorized" };
+    throw e;
+  }
+  if (!owned) return { ok: false, error: "Not authorized" };
+
+  // 3. mint. The key is opaque and carries no session/class/filename.
+  const objectKey = generateObjectKey();
+  try {
+    const { signedUrl, token } = await createSignedUploadUrl(objectKey);
+    return { ok: true, objectKey, signedUrl, token };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Could not prepare the upload",
+    };
+  }
+}
+
+/**
+ * Step 3 of 3 (the browser does step 2): verify what ACTUALLY landed, then write
+ * the attachment + material rows atomically.
+ *
+ * The size and MIME recorded here come from storage, never from the client. A
+ * caller who requested a URL for a small PDF and then pushed something else gets
+ * the object deleted and no rows — which is why validating only at step 1 would
+ * not be enough.
+ */
+export async function confirmMaterialUpload(input: {
+  sessionId: string;
+  objectKey: string;
+  filename: string;
+  title?: string;
+}): Promise<FormState> {
+  // 1. parse
+  const parsed = confirmUploadSchema.safeParse(input);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  // 2. authorize
+  let owned;
+  try {
+    owned = await ownedSession(parsed.data.sessionId);
+  } catch (e) {
+    if (e instanceof AuthzError) return { error: "Not authorized" };
+    throw e;
+  }
+  if (!owned) return { error: "Not authorized" };
+
+  // 3. verify the real object, and refuse anything that doesn't match policy.
+  const stat = await statObject(parsed.data.objectKey);
+  if (!stat) return { error: "The upload didn't complete. Please try again." };
+
+  if (stat.sizeBytes > MAX_FILE_BYTES || !isAllowedMimeType(stat.mimeType)) {
+    await removeObject(parsed.data.objectKey);
+    return { error: "That file isn't allowed." };
+  }
+
+  // 4. mutate
+  await db.transaction(async (tx) => {
+    const [attachment] = await tx
+      .insert(attachments)
+      .values({
+        bucket: MATERIALS_BUCKET,
+        objectKey: parsed.data.objectKey,
+        // Metadata ONLY — the filename is never part of the storage path.
+        originalFilename: parsed.data.filename,
+        mimeType: stat.mimeType,
+        sizeBytes: stat.sizeBytes,
+        uploadedByUserId: owned.user.id,
+      })
+      .returning({ id: attachments.id });
+
+    const [material] = await tx
+      .insert(materials)
+      .values({
+        sessionId: parsed.data.sessionId,
+        attachmentId: attachment.id,
+        title: parsed.data.title ?? null,
+        createdByUserId: owned.user.id,
+      })
+      .returning({ id: materials.id });
+
+    await recordEvent(
+      {
+        actorId: owned.user.id,
+        verb: "material.uploaded",
+        subjectType: "material",
+        subjectId: material.id,
+        payload: { sessionId: parsed.data.sessionId, sizeBytes: stat.sizeBytes },
+      },
+      tx,
+    );
+  });
+
+  // 5. revalidate
+  revalidatePath(`/sessions/${parsed.data.sessionId}`);
+  return { ok: true };
+}
+
+/**
+ * Soft-delete a material. Owner-only. The object itself is deliberately left in
+ * the bucket — `deleted_at` is recoverable, a removed object is not.
+ */
+export async function deleteMaterial(materialId: string): Promise<void> {
+  const user = await requireAuthUser();
+  const found = await getMaterialForViewer(user.id, materialId);
+  if (!found) return;
+  if (found.relationship !== "owner") return;
+
+  await db
+    .update(materials)
+    .set({ deletedAt: new Date(), updatedAt: new Date() })
+    .where(and(eq(materials.id, materialId), isNull(materials.deletedAt)));
+
+  await recordEvent({
+    actorId: user.id,
+    verb: "material.deleted",
+    subjectType: "material",
+    subjectId: materialId,
+  });
+
+  revalidatePath(`/sessions/${found.sessionId}`);
 }
 
 /**

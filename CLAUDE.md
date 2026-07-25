@@ -90,6 +90,26 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
 > rests on. The signup gate above closes the *invite-shell* case only. Turning
 > confirmations on needs a "check your email" state in both signup flows.
 
+## Files and object storage
+
+- The `materials` bucket is **private** and must exist before uploads work. It is
+  declared in `supabase/config.toml` (created on `supabase start`); a new cloud
+  project needs it created once with the same limits.
+- Size and MIME limits are declared **twice on purpose** — in
+  `lib/storage/config.ts` and on the bucket itself — so Storage rejects a bad
+  object even if a caller reaches it without passing our checks. Change both.
+- Uploads go **browser → storage directly** via a signed upload URL. Bytes never
+  pass through Next, because Vercel caps request bodies near 4.5MB and materials
+  can be 25MB. The action mints the URL only after an authz check.
+- **The client's claims about a file are never recorded.** `confirmMaterialUpload`
+  re-reads the object's real size and MIME with `statObject` and writes those;
+  a mismatch deletes the object and writes no rows. Validating only at mint time
+  would let a caller request a URL for a small PDF and push something else.
+- Only `app/api/materials/[id]/download` may serve a file, and it authorizes
+  *before* minting. Signed URLs are short-lived and never rendered into a page.
+- Deleting a material is a soft delete; the object stays in the bucket. Student
+  work and tutor uploads are not recoverable once the bytes are gone.
+
 ## Stack
 
 > Confirm this section with the project owner before the first commit; everything below assumes it.
