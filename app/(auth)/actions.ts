@@ -4,15 +4,19 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/auth/supabase-server";
 import { ensureProfile } from "@/lib/auth/ensure-profile";
 import { getProfile } from "@/lib/auth/session";
-import { homeForRole } from "@/lib/auth/roles";
+import { homeForRole, type Role } from "@/lib/auth/roles";
 import { logInSchema, signUpSchema } from "@/lib/validation/auth";
 import type { FormState } from "@/lib/types";
 
-export async function signUp(
-  _prev: FormState,
+/**
+ * Shared self-signup. Role is decided by WHICH entry point called this, never
+ * by client input: `/signup` -> tutor (paying), `/signup/student` -> student.
+ * Students can create an account freely, but can only JOIN a class by invite.
+ */
+async function createAccount(
   formData: FormData,
+  role: Role,
 ): Promise<FormState> {
-  // 1. parse
   const parsed = signUpSchema.safeParse({
     email: formData.get("email"),
     password: formData.get("password"),
@@ -30,15 +34,28 @@ export async function signUp(
   if (error) return { error: error.message };
   if (!data.user) return { error: "Sign up failed. Please try again." };
 
-  // Second half of the dual-write: self-signup always creates a TUTOR (the
-  // paying account). Students are created only via invite acceptance.
+  // Second half of the dual-write: create the domain profile with its role.
   await ensureProfile(
     { id: data.user.id, email: parsed.data.email },
-    "tutor",
+    role,
     parsed.data.fullName,
   );
 
-  redirect("/dashboard");
+  redirect(homeForRole(role));
+}
+
+export async function signUp(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  return createAccount(formData, "tutor");
+}
+
+export async function signUpStudent(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  return createAccount(formData, "student");
 }
 
 export async function logIn(

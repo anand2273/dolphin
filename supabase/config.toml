@@ -249,6 +249,12 @@ otp_expiry = 3600
 subject = "You've been invited to TutorOS"
 content_path = "./supabase/templates/invite.html"
 
+# Magic link — used when inviting an email that ALREADY has a student account
+# (Supabase can't "invite" an existing user). Routes through /auth/confirm too.
+[auth.email.template.magic_link]
+subject = "Join your class on TutorOS"
+content_path = "./supabase/templates/magic_link.html"
+
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]
 # enabled = true

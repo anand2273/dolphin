@@ -39,9 +39,13 @@ export function LoginForm() {
         {pending ? "Signing in…" : "Sign in"}
       </Button>
       <p className="text-center text-sm text-muted-foreground">
-        No account?{" "}
+        New here?{" "}
         <Link href="/signup" className="underline">
-          Create one
+          Tutor sign-up
+        </Link>{" "}
+        ·{" "}
+        <Link href="/signup/student" className="underline">
+          Student sign-up
         </Link>
       </p>
     </form>

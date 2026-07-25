@@ -24,10 +24,11 @@ If a task appears to require any of the above, **stop and ask** rather than buil
 
 | Term | Meaning |
 |---|---|
-| **Tutor** | The paying user. Owns everything. |
-| **Student** | Invited user. Very low-privilege. |
+| **Tutor** | The paying user. Owns everything. Created by self-signup at `/signup`. |
+| **Student** | Very low-privilege user. Self-registers an account at `/signup/student`, but can only **join a class by invitation** (email-bound). |
 | **Class** | An ongoing engagement between one tutor and one or more students for one subject. Not "course", not "group", not "batch". |
 | **Enrollment** | A student's membership in a class. |
+| **Invitation** | A tutor's email-bound, single-use, expiring offer for a student to join a class. Pre-enrollment; distinct from Enrollment. |
 | **Session** | A single dated lesson belonging to a class. **This is the organising unit of the entire app.** |
 | **Material** | A file the tutor attaches to a session. |
 | **Assignment** | Homework issued in a session. |

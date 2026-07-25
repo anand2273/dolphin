@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getAuthUser } from "@/lib/auth/session";
+import { getAuthUser, getProfile } from "@/lib/auth/session";
 import { getInvitationByToken } from "@/lib/db/queries/invitations";
 import {
   evaluateInviteAcceptance,
@@ -59,17 +59,38 @@ export default async function AcceptInvitePage({
     );
   }
 
+  const profile = await getProfile(user.id);
+
+  // A tutor account cannot join a class as a student (strict separation).
+  if (profile?.role === "tutor") {
+    return (
+      <Shell>
+        <CardHeader>
+          <CardTitle className="text-lg">Signed in as a tutor</CardTitle>
+          <CardDescription>
+            Sign out and use the invite link again to join {row!.className} as a
+            student.
+          </CardDescription>
+        </CardHeader>
+      </Shell>
+    );
+  }
+
+  // Existing student -> one-click join. Brand-new invitee -> create account.
+  const mode = profile ? "join" : "create";
+
   return (
     <Shell>
       <CardHeader>
         <CardTitle className="text-lg">Join {row!.className}</CardTitle>
         <CardDescription>
-          Invited by {row!.tutorName ?? "your tutor"}. Set a password to finish
-          joining as {user.email}.
+          {mode === "create"
+            ? `Invited by ${row!.tutorName ?? "your tutor"}. Create your student account to join as ${user.email}.`
+            : `Invited by ${row!.tutorName ?? "your tutor"}. Join as ${user.email}.`}
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <AcceptInviteForm token={token} />
+        <AcceptInviteForm token={token} mode={mode} />
       </CardContent>
     </Shell>
   );

@@ -7,6 +7,7 @@ import { db } from "@/lib/db/client";
 import { invitations, profiles } from "@/lib/db/schema";
 import { requireAuthUser } from "@/lib/auth/session";
 import { assertClassOwner, AuthzError } from "@/lib/auth/authz";
+import { createClient } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "@/lib/auth/supabase-admin";
 import { recordEvent } from "@/lib/db/events";
 import { generateInviteToken } from "@/lib/tokens";
@@ -103,14 +104,31 @@ export async function inviteStudent(
   // (profile-less, from a prior invite), delete that shell first so the email
   // actually goes out. Errors are surfaced, never swallowed.
   const acceptUrl = `${await requestOrigin()}/invite/accept/${raw}`;
-  if (existingProfile?.role !== "student") {
+  if (existingProfile?.role === "student") {
+    // Existing student account — Supabase can't "invite" an existing user, so
+    // send a magic link. Clicking it signs them in and lands on the join page,
+    // where they one-click join the class.
+    const anon = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    );
+    const { error } = await anon.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: acceptUrl, shouldCreateUser: false },
+    });
+    if (error) {
+      return { error: `Couldn't send the invite email: ${error.message}` };
+    }
+  } else {
+    // No profile yet. Send the Supabase invite (which creates the account). If a
+    // confirmed-but-unaccepted auth shell is blocking it, remove that abandoned
+    // shell first so the invite email actually sends.
     const admin = createSupabaseAdminClient();
     const staleRows = (await db.execute(
       sql`select id from auth.users where lower(email) = ${email} limit 1`,
     )) as unknown as { id: string }[];
     if (staleRows[0]) {
-      // No profile exists for this email (checked above) => this auth row is an
-      // abandoned invite shell; safe to remove so we can re-invite cleanly.
       await admin.auth.admin.deleteUser(staleRows[0].id);
     }
     const { error } = await admin.auth.admin.inviteUserByEmail(email, {

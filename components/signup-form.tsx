@@ -1,18 +1,30 @@
 "use client";
-// Client Component: drives form submission state (pending) and shows inline
-// validation/auth errors returned by the server action.
+// Client Component: drives submission state (pending) and shows inline
+// validation/auth errors. The server action + CTA are passed in so the same
+// form serves both tutor (/signup) and student (/signup/student) signups.
 
 import Link from "next/link";
 import { useActionState } from "react";
-import { signUp } from "@/app/(auth)/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { FormState } from "@/lib/types";
 
-export function SignupForm() {
+type Action = (state: FormState, formData: FormData) => Promise<FormState>;
+
+export function SignupForm({
+  action,
+  submitLabel,
+  altHref,
+  altLabel,
+}: {
+  action: Action;
+  submitLabel: string;
+  altHref: string;
+  altLabel: string;
+}) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(
-    signUp,
+    action,
     {},
   );
 
@@ -37,16 +49,13 @@ export function SignupForm() {
         />
         <p className="text-xs text-muted-foreground">At least 8 characters.</p>
       </div>
-      {state?.error && (
-        <p className="text-sm text-destructive">{state.error}</p>
-      )}
+      {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
       <Button type="submit" className="w-full" disabled={pending}>
-        {pending ? "Creating account…" : "Create account"}
+        {pending ? "Creating account…" : submitLabel}
       </Button>
       <p className="text-center text-sm text-muted-foreground">
-        Already have an account?{" "}
-        <Link href="/login" className="underline">
-          Sign in
+        <Link href={altHref} className="underline">
+          {altLabel}
         </Link>
       </p>
     </form>

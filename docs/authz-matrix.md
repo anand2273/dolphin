@@ -31,7 +31,7 @@ resource* via the relationship check (owner / enrolled / none).
 | 1 | Sign up as tutor | ✔ | ✔ | ✔ | ✔ (public) |
 | 2 | Log in | ✔ | ✔ | ✔ | ✔ (public) |
 | 3 | View / edit **own** profile | ✔ | ✔ | ✔ | ✘ |
-| 4 | Self-register as a student (no invite) | ✘ | ✘ | ✘ | ✘ (invite-only) |
+| 4 | Self-register a student account (no invite) | ✔ | ✔ | ✔ | ✔ (public) |
 | **Class** |
 | 5 | Create class | ✔ | ✘ | ✘ | ✘ |
 | 6 | View class (list / detail) | ✔ | ✔ | ✘ | ✘ |
