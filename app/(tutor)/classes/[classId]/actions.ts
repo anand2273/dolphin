@@ -7,6 +7,7 @@ import { db } from "@/lib/db/client";
 import { invitations, profiles } from "@/lib/db/schema";
 import { requireAuthUser } from "@/lib/auth/session";
 import { assertClassOwner, AuthzError } from "@/lib/auth/authz";
+import { findAccountByEmail } from "@/lib/auth/account-lookup";
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "@/lib/auth/supabase-admin";
 import { recordEvent } from "@/lib/db/events";
@@ -103,7 +104,13 @@ export async function inviteStudent(
   // Supabase invite — but if an abandoned, unaccepted auth shell is blocking it
   // (profile-less, from a prior invite), delete that shell first so the email
   // actually goes out. Errors are surfaced, never swallowed.
-  const acceptUrl = `${await requestOrigin()}/invite/accept/${raw}`;
+  // The emailed link must land on /auth/confirm on the SAME origin the tutor is
+  // using, because that is where verifyOtp's session cookie gets set. The email
+  // template builds its href from this URL (not from Supabase's site_url), so
+  // the whole chain — confirm, then accept — stays on one host. `next` is a
+  // path, never an absolute URL; base64url tokens contain no `&` or `#`, so it
+  // needs no percent-encoding and survives the template's URL normalizer.
+  const confirmUrl = `${await requestOrigin()}/auth/confirm?next=/invite/accept/${raw}`;
   if (existingProfile?.role === "student") {
     // Existing student account — Supabase can't "invite" an existing user, so
     // send a magic link. Clicking it signs them in and lands on the join page,
@@ -115,7 +122,7 @@ export async function inviteStudent(
     );
     const { error } = await anon.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: acceptUrl, shouldCreateUser: false },
+      options: { emailRedirectTo: confirmUrl, shouldCreateUser: false },
     });
     if (error) {
       return { error: `Couldn't send the invite email: ${error.message}` };
@@ -125,14 +132,12 @@ export async function inviteStudent(
     // confirmed-but-unaccepted auth shell is blocking it, remove that abandoned
     // shell first so the invite email actually sends.
     const admin = createSupabaseAdminClient();
-    const staleRows = (await db.execute(
-      sql`select id from auth.users where lower(email) = ${email} limit 1`,
-    )) as unknown as { id: string }[];
-    if (staleRows[0]) {
-      await admin.auth.admin.deleteUser(staleRows[0].id);
+    const shell = await findAccountByEmail(email);
+    if (shell && !shell.claimed) {
+      await admin.auth.admin.deleteUser(shell.authUserId);
     }
     const { error } = await admin.auth.admin.inviteUserByEmail(email, {
-      redirectTo: acceptUrl,
+      redirectTo: confirmUrl,
     });
     if (error) {
       return { error: `Couldn't send the invite email: ${error.message}` };

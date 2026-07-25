@@ -25,3 +25,10 @@ if (process.env.NODE_ENV !== "production") {
 
 export const db = drizzle(sql, { schema });
 export type Db = typeof db;
+
+/**
+ * Accepted by any helper that must be able to run either standalone or inside
+ * `db.transaction(...)`. Taking this instead of `Db` is what keeps a helper's
+ * writes on the transaction's connection, so they roll back with it.
+ */
+export type DbOrTx = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];

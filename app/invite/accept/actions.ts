@@ -30,7 +30,7 @@ async function finalizeAcceptance(
   fullName?: string,
 ) {
   await db.transaction(async (tx) => {
-    await ensureProfile(user, "student", fullName);
+    await ensureProfile(user, "student", fullName, tx);
     await tx
       .insert(enrollments)
       .values({ classId: invitation.classId, studentId: user.id })

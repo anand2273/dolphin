@@ -1,11 +1,19 @@
-<!-- TutorOS invite email. The link goes to our /auth/confirm route (token_hash
-     flow) which verifies the invite server-side, sets the session cookie, then
-     redirects to the accept page carried in `next` (= .RedirectTo). -->
+<!-- TutorOS invite email.
+
+     The href is built from RedirectTo, NOT SiteURL. RedirectTo is the
+     /auth/confirm?next=/invite/accept/TOKEN URL that the invite action minted on
+     the origin the tutor was actually using. Building from SiteURL instead puts
+     /auth/confirm on a different host than the accept page (the localhost vs
+     127.0.0.1 split), and the session cookie set by verifyOtp is host-scoped —
+     so it does not survive that redirect and the invitee dead-ends at /login.
+
+     Keep template actions out of these comments: Go's html/template refuses to
+     parse them here. -->
 <h2>You've been invited to TutorOS</h2>
 <p>Your tutor has invited you to their class. Tap the button below to set a
    password and join.</p>
 <p>
-  <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite&next={{ .RedirectTo }}"
+  <a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=invite"
      style="display:inline-block;padding:10px 16px;background:#2b3a67;color:#fff;border-radius:6px;text-decoration:none">
     Accept invitation
   </a>

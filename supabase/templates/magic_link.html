@@ -1,10 +1,11 @@
-<!-- TutorOS magic-link email (existing student invited to a class). Routes
-     through /auth/confirm (token_hash flow) which verifies server-side, sets the
-     session, then redirects to the accept page carried in `next` (= .RedirectTo). -->
+<!-- TutorOS magic-link email (existing student invited to a class). Same
+     reasoning as invite.html: the href is built from RedirectTo so /auth/confirm
+     and the accept page share one origin, and the session cookie survives the
+     redirect. -->
 <h2>Join your class on TutorOS</h2>
 <p>Your tutor has invited you to a class. Tap below to sign in and join.</p>
 <p>
-  <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=magiclink&next={{ .RedirectTo }}"
+  <a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=magiclink"
      style="display:inline-block;padding:10px 16px;background:#2b3a67;color:#fff;border-radius:6px;text-decoration:none">
     Sign in &amp; join
   </a>

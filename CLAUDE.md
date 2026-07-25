@@ -57,6 +57,29 @@ Never introduce synonyms. If a new concept is genuinely needed, add it to this t
 - Service-role / admin keys are server-only. If one is about to be imported into a client component, stop and flag it.
 - Uploads: validate MIME type and size **server-side**, enforce a size cap, and store the original filename as metadata only — never as part of a storage path.
 
+## Auth & email links
+
+Everything here was learned by breaking it. Do not "simplify" these rules.
+
+- **An emailed auth link must stay on one origin end to end.** `verifyOtp`'s
+  session cookie is host-scoped, so `localhost:3000` and `127.0.0.1:3000` are
+  different accounts as far as the browser is concerned. `/auth/confirm`
+  therefore redirects using the **Host header of the incoming request**, never
+  `request.url`'s origin (Next does not guarantee those match).
+- Email templates build their href from `{{ .RedirectTo }}`, **not**
+  `{{ .SiteURL }}` — the invite action mints a `/auth/confirm?next=<path>` URL on
+  the origin the tutor is actually using, so the whole chain inherits it. `next`
+  is always a path, never an absolute URL.
+- Template comments must not contain `{{ }}` actions — Go's `html/template`
+  refuses to parse them and GoTrue then 500s on every send.
+- **Editing `supabase/templates/*.html` needs `docker restart
+  supabase_kong_dolphin supabase_auth_dolphin`.** Kong serves those files with
+  the byte length it captured at container start, so an edited template arrives
+  truncated and GoTrue fails with "ends in a non-text context".
+- **Never send an invitee to `/login` on failure.** They have no password yet, so
+  a login form is a dead end that also leaves their address unusable. Failures go
+  to `/link-expired`; an unauthenticated hit on the accept page explains itself.
+
 ## Stack
 
 > Confirm this section with the project owner before the first commit; everything below assumes it.

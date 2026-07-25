@@ -1,4 +1,4 @@
-import { redirect } from "next/navigation";
+import Link from "next/link";
 import { getAuthUser, getProfile } from "@/lib/auth/session";
 import { getInvitationByToken } from "@/lib/db/queries/invitations";
 import {
@@ -31,9 +31,31 @@ export default async function AcceptInvitePage({
 
   const user = await getAuthUser();
   if (!user) {
-    // The email link should have signed them in via /auth/confirm. If not,
-    // send them to log in and return here.
-    redirect(`/login?next=${encodeURIComponent(`/invite/accept/${token}`)}`);
+    // Reaching this page unauthenticated means /auth/confirm never ran (the
+    // link was opened out of context, or the URL was copied by hand). Do NOT
+    // bounce to /login: a brand-new invitee has no password, so the login form
+    // is a dead end and they end up unable to use their own email address.
+    return (
+      <Shell>
+        <CardHeader>
+          <CardTitle className="text-lg">Open this from your invitation email</CardTitle>
+          <CardDescription>
+            The link in the email signs you in first, then brings you here to
+            create your account and join the class. If the email link has stopped
+            working, ask your tutor to send the invitation again.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            Already have a TutorOS student account?{" "}
+            <Link href="/login" className="underline">
+              Sign in
+            </Link>{" "}
+            — pending invitations are waiting on your dashboard.
+          </p>
+        </CardContent>
+      </Shell>
+    );
   }
 
   const row = await getInvitationByToken(token);
