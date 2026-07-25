@@ -79,6 +79,16 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
 - **Never send an invitee to `/login` on failure.** They have no password yet, so
   a login form is a dead end that also leaves their address unusable. Failures go
   to `/link-expired`; an unauthenticated hit on the accept page explains itself.
+- **Self-signup is refused for any address that already has a GoTrue account**
+  (`findAccountByEmail`). This is a security gate: `inviteUserByEmail` creates an
+  auth row *before* email control is proved, and with confirmations disabled
+  GoTrue hands a session for that row to whoever calls `signUp`.
+
+> **Open decision — `auth.email.enable_confirmations` is `false`.** While it is
+> off, anyone can self-signup as an address they don't control and sit waiting
+> for a tutor to invite it, which defeats the email-binding the invite model
+> rests on. The signup gate above closes the *invite-shell* case only. Turning
+> confirmations on needs a "check your email" state in both signup flows.
 
 ## Stack
 

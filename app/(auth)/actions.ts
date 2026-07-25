@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/auth/supabase-server";
+import { findAccountByEmail } from "@/lib/auth/account-lookup";
 import { ensureProfile } from "@/lib/auth/ensure-profile";
 import { getProfile } from "@/lib/auth/session";
 import { homeForRole, type Role } from "@/lib/auth/roles";
@@ -24,6 +25,22 @@ async function createAccount(
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  // Refuse self-signup for an address that already has a GoTrue account. This
+  // is a security gate, not a convenience check: for an UNCLAIMED invite shell
+  // (auth.users row created by inviteUserByEmail, no profile yet, not confirmed)
+  // GoTrue happily returns a *session* to whoever calls signUp — without ever
+  // verifying email control — which would let anyone who guesses an invited
+  // address accept that person's invitation. It also leaves the account
+  // confirmed but password-less, permanently locking the real invitee out.
+  const existing = await findAccountByEmail(parsed.data.email);
+  if (existing) {
+    return {
+      error: existing.claimed
+        ? "That email already has an account. Sign in instead."
+        : "That email has a pending class invitation. Open the link in your invitation email to finish setting up your account, or ask your tutor to resend it.",
+    };
   }
 
   const supabase = await createSupabaseServerClient();
