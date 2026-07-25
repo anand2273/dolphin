@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { invitations, profiles } from "@/lib/db/schema";
+import { invitations, profiles, sessions } from "@/lib/db/schema";
 import { requireAuthUser } from "@/lib/auth/session";
 import { assertClassOwner, AuthzError } from "@/lib/auth/authz";
 import { findAccountByEmail } from "@/lib/auth/account-lookup";
@@ -13,6 +13,7 @@ import { createSupabaseAdminClient } from "@/lib/auth/supabase-admin";
 import { recordEvent } from "@/lib/db/events";
 import { generateInviteToken } from "@/lib/tokens";
 import { inviteStudentSchema } from "@/lib/validation/invite";
+import { createSessionSchema } from "@/lib/validation/session";
 import type { FormState } from "@/lib/types";
 
 const INVITE_TTL_DAYS = 7;
@@ -143,6 +144,55 @@ export async function inviteStudent(
       return { error: `Couldn't send the invite email: ${error.message}` };
     }
   }
+
+  // 4. revalidate
+  revalidatePath(`/classes/${classId}`);
+  return { ok: true };
+}
+
+/** Create a session (one dated lesson) in a class. Owner-only. */
+export async function createSession(
+  classId: string,
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  // 1. parse
+  const parsed = createSessionSchema.safeParse({
+    title: formData.get("title") ?? undefined,
+    scheduledAt: formData.get("scheduledAt"),
+    timezone: formData.get("timezone"),
+  });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  // 2. authorize — only the class owner may add lessons to it.
+  const user = await requireAuthUser();
+  try {
+    await assertClassOwner(user.id, classId);
+  } catch (e) {
+    if (e instanceof AuthzError) return { error: "Not authorized" };
+    throw e;
+  }
+
+  // 3. mutate
+  const [created] = await db
+    .insert(sessions)
+    .values({
+      classId,
+      title: parsed.data.title ?? null,
+      scheduledAt: parsed.data.scheduledAt,
+      timezone: parsed.data.timezone,
+    })
+    .returning({ id: sessions.id });
+
+  await recordEvent({
+    actorId: user.id,
+    verb: "session.created",
+    subjectType: "session",
+    subjectId: created.id,
+    payload: { classId },
+  });
 
   // 4. revalidate
   revalidatePath(`/classes/${classId}`);

@@ -1,4 +1,7 @@
+import Link from "next/link";
 import { requireStudent } from "@/lib/auth/guards";
+import { listSessionsForClass } from "@/lib/db/queries/sessions";
+import { SessionDateTime, SessionWhen } from "@/components/session-datetime";
 import {
   listEnrolledClasses,
   listPendingInvitesForEmail,
@@ -21,6 +24,17 @@ export default async function StudentHome() {
     listEnrolledClasses(user.id),
     listPendingInvitesForEmail(user.email),
   ]);
+
+  // Each lookup re-checks enrollment inside listSessionsForClass — the class
+  // list is not treated as proof of access.
+  const sessionsByClass = new Map(
+    await Promise.all(
+      classes.map(
+        async (c) =>
+          [c.classId, await listSessionsForClass(user.id, c.classId)] as const,
+      ),
+    ),
+  );
 
   return (
     <main className="mx-auto max-w-xl space-y-6 p-6">
@@ -83,6 +97,29 @@ export default async function StudentHome() {
                   {c.tutorName ?? "Your tutor"}
                 </CardDescription>
               </CardHeader>
+              <CardContent className="space-y-1">
+                {(sessionsByClass.get(c.classId) ?? []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No lessons scheduled yet.
+                  </p>
+                ) : (
+                  sessionsByClass.get(c.classId)!.map((s) => (
+                    <Link
+                      key={s.id}
+                      href={`/sessions/${s.id}`}
+                      className="flex items-center justify-between gap-4 rounded px-2 py-2 hover:bg-muted"
+                    >
+                      <div>
+                        <p className="text-sm">{s.title ?? "Untitled lesson"}</p>
+                        <p className="text-xs text-muted-foreground">
+                          <SessionDateTime at={s.scheduledAt} />
+                        </p>
+                      </div>
+                      <SessionWhen at={s.scheduledAt} />
+                    </Link>
+                  ))
+                )}
+              </CardContent>
             </Card>
           ))}
         </div>

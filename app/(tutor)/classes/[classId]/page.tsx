@@ -6,7 +6,10 @@ import {
   listPendingInvitesForClass,
   listRoster,
 } from "@/lib/db/queries/invitations";
+import { listSessionsForClass } from "@/lib/db/queries/sessions";
 import { InviteStudentForm } from "@/components/invite-student-form";
+import { CreateSessionForm } from "@/components/create-session-form";
+import { SessionDateTime, SessionWhen } from "@/components/session-datetime";
 import { revokeInvitation } from "./actions";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,9 +36,10 @@ export default async function ClassPage({
     throw e;
   }
 
-  const [roster, pending] = await Promise.all([
+  const [roster, pending, classSessions] = await Promise.all([
     listRoster(classId),
     listPendingInvitesForClass(classId),
+    listSessionsForClass(user.id, classId),
   ]);
 
   return (
@@ -52,6 +56,37 @@ export default async function ClassPage({
 
       <section className="grid gap-6 md:grid-cols-[1fr_320px]">
         <div className="space-y-6">
+          <div className="space-y-3">
+            <h2 className="text-sm font-medium text-muted-foreground">
+              Lessons ({classSessions.length})
+            </h2>
+            {classSessions.length === 0 ? (
+              <Card>
+                <CardContent className="p-4 text-sm text-muted-foreground">
+                  No lessons yet. Add the first one on the right.
+                </CardContent>
+              </Card>
+            ) : (
+              classSessions.map((s) => (
+                <Card key={s.id}>
+                  <Link href={`/sessions/${s.id}`} className="block">
+                    <CardContent className="flex items-center justify-between gap-4 p-4">
+                      <div>
+                        <p className="text-sm font-medium">
+                          {s.title ?? "Untitled lesson"}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          <SessionDateTime at={s.scheduledAt} />
+                        </p>
+                      </div>
+                      <SessionWhen at={s.scheduledAt} />
+                    </CardContent>
+                  </Link>
+                </Card>
+              ))
+            )}
+          </div>
+
           <div className="space-y-3">
             <h2 className="text-sm font-medium text-muted-foreground">
               Students ({roster.length})
@@ -102,17 +137,31 @@ export default async function ClassPage({
           )}
         </div>
 
-        <Card className="h-fit">
-          <CardHeader>
-            <CardTitle className="text-base">Invite a student</CardTitle>
-            <CardDescription>
-              They&apos;ll get an email to set a password and join.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <InviteStudentForm classId={classId} />
-          </CardContent>
-        </Card>
+        <div className="space-y-6">
+          <Card className="h-fit">
+            <CardHeader>
+              <CardTitle className="text-base">Add a lesson</CardTitle>
+              <CardDescription>
+                A dated lesson. Materials and homework attach to it.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <CreateSessionForm classId={classId} />
+            </CardContent>
+          </Card>
+
+          <Card className="h-fit">
+            <CardHeader>
+              <CardTitle className="text-base">Invite a student</CardTitle>
+              <CardDescription>
+                They&apos;ll get an email to set a password and join.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <InviteStudentForm classId={classId} />
+            </CardContent>
+          </Card>
+        </div>
       </section>
     </main>
   );
