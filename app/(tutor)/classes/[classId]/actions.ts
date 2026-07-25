@@ -56,26 +56,38 @@ export async function inviteStudent(
     return { error: "That email already has a tutor account." };
   }
 
-  // 3. mutate — create the invitation row (partial-unique index blocks a second
-  // live pending invite for the same class+email).
+  // 3. mutate — resend-aware. If a live pending invite already exists for this
+  // class+email, rotate its token and extend it (so pressing "Send invite"
+  // again re-sends); otherwise insert a new one.
   const { raw, hash } = generateInviteToken();
   const expiresAt = new Date(Date.now() + INVITE_TTL_DAYS * 24 * 3600 * 1000);
 
+  const [pending] = await db
+    .select({ id: invitations.id })
+    .from(invitations)
+    .where(
+      and(
+        eq(invitations.classId, classId),
+        eq(sql`lower(${invitations.email})`, email),
+        eq(invitations.status, "pending"),
+        isNull(invitations.deletedAt),
+      ),
+    )
+    .limit(1);
+
   let invitationId: string;
-  try {
+  if (pending) {
+    await db
+      .update(invitations)
+      .set({ tokenHash: hash, expiresAt, updatedAt: new Date() })
+      .where(eq(invitations.id, pending.id));
+    invitationId = pending.id;
+  } else {
     const [created] = await db
       .insert(invitations)
-      .values({
-        classId,
-        email,
-        tokenHash: hash,
-        invitedByUserId: user.id,
-        expiresAt,
-      })
+      .values({ classId, email, tokenHash: hash, invitedByUserId: user.id, expiresAt })
       .returning({ id: invitations.id });
     invitationId = created.id;
-  } catch {
-    return { error: "There's already a pending invite for that email." };
   }
 
   await recordEvent({
@@ -85,17 +97,28 @@ export async function inviteStudent(
     subjectId: invitationId,
   });
 
-  // Send the email. New accounts get a Supabase invite (which proves email
-  // control); existing accounts will see the pending invite on their dashboard.
+  // Send the email. An existing STUDENT account already has a login and will see
+  // the invite in-app on /student, so no email is needed. Otherwise send the
+  // Supabase invite — but if an abandoned, unaccepted auth shell is blocking it
+  // (profile-less, from a prior invite), delete that shell first so the email
+  // actually goes out. Errors are surfaced, never swallowed.
   const acceptUrl = `${await requestOrigin()}/invite/accept/${raw}`;
-  if (!existingProfile) {
+  if (existingProfile?.role !== "student") {
     const admin = createSupabaseAdminClient();
-    await admin.auth.admin
-      .inviteUserByEmail(email, { redirectTo: acceptUrl })
-      .catch(() => {
-        // e.g. user already exists in auth but has no profile — non-fatal;
-        // the invite row still stands and they can accept once signed in.
-      });
+    const staleRows = (await db.execute(
+      sql`select id from auth.users where lower(email) = ${email} limit 1`,
+    )) as unknown as { id: string }[];
+    if (staleRows[0]) {
+      // No profile exists for this email (checked above) => this auth row is an
+      // abandoned invite shell; safe to remove so we can re-invite cleanly.
+      await admin.auth.admin.deleteUser(staleRows[0].id);
+    }
+    const { error } = await admin.auth.admin.inviteUserByEmail(email, {
+      redirectTo: acceptUrl,
+    });
+    if (error) {
+      return { error: `Couldn't send the invite email: ${error.message}` };
+    }
   }
 
   // 4. revalidate
