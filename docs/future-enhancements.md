@@ -1,4 +1,17 @@
 # Dolphn - Future Enhancements
+
+Everything here is **beyond v1**. v1 scope is fixed in [`../CLAUDE.md`](../CLAUDE.md)
+and nothing below should be built until CP6 (assignments and submissions) closes
+it out. For what exists today see [`status.md`](status.md).
+
+The first section is the product direction in the owner's own words. The sections
+after it are engineering annotations on that vision — what the current schema
+already supports, and what would need new tables.
+
+---
+
+## Product direction
+
 - Material Creation
 
 - Knowledge Base, Data Moat, Agentic Layer
@@ -16,3 +29,62 @@
 - Homework and Supplementary Practice 
     1. Homework assignments can be accessed from a single location within the student portal
     2. submitted assignments can be accessed from a single location within the tutor's page to review/mark
+
+---
+
+## What the current schema already supports
+
+These were added in CP1 specifically so the above wouldn't require a schema
+rewrite. The columns and tables exist; **no behaviour is built**.
+
+| Direction above | Existing seam |
+|---|---|
+| Session-based knowledge (notes, homework, submissions per lesson) | The whole model is session-centric already — materials, assignments and submissions each reach exactly one session |
+| Content extraction from uploaded files | `attachments.extracted_text` + `extraction_status` (`none` today; nothing extracts) |
+| Agent-authored feedback alongside tutor feedback | `feedback.author_type ∈ ('tutor','agent')` with a nullable `author_user_id`. v1 only ever writes tutor rows |
+| Weakness/strength analytics | `topics` + `assignment_topics`. **Without topic tags there is nothing for analytics to aggregate on** — CLAUDE.md calls this the single most valuable hook in the list |
+| Student performance over time | `submissions` are append-only and versioned, so improvement across resubmissions is measurable rather than overwritten |
+| Any behavioural or usage signal | `events` is append-only with `actor_id`, `verb`, `subject_type`, `subject_id`, `payload jsonb` |
+
+The practical consequence: **CP6 should ship topic tagging with assignments**,
+even though nothing consumes it yet. Retrofitting tags onto historical
+assignments means asking a tutor to re-tag a term's work, which they won't do.
+
+## What would need new schema
+
+| Direction above | What's missing |
+|---|---|
+| Class-level syllabus / knowledge base | No syllabus entity. Materials belong to a session by design, so a class-scoped document needs either a new table or a deliberate relaxation of the "everything hangs off a session" rule — the latter is a significant domain decision, not a small one |
+| Tutor teaching approach, plans, goals | Nothing models tutor intent; today's schema records what happened, not what was planned |
+| Onboarding survey at class creation | No survey/response tables |
+| Time-to-exam behaviour | No exam date on a class |
+| Timed practice papers | Assignments have no notion of a time limit or of being sat under conditions |
+| Homework in one place (student portal / tutor review) | No new schema needed — these are **views**, not entities. Both are queries across existing tables plus routes |
+
+Note that the last row is the cheapest item on this page and probably the most
+immediately useful to a working tutor.
+
+## Explicitly still out of bounds
+
+Per CLAUDE.md, none of these enter the codebase during v1, regardless of how
+much the direction above implies them:
+
+- LLM SDKs, vector stores, embedding columns
+- Auto-marking of any kind
+- Analytics dashboards
+- Multi-tutor agencies or organisations
+
+The rule is *leave seams, not scaffolding*. Adding an unused dependency is
+scaffolding; adding a nullable column the AI layer will need is a seam.
+
+## Near-term engineering work
+
+Not product features, but the things that would need doing before or alongside
+any of the above. The full list with detail is in
+[`status.md`](status.md#known-gaps):
+
+1. Turn on email confirmations — the largest open security gap
+2. Database backups
+3. The Playwright happy path CLAUDE.md specifies
+4. Storage garbage collection for orphaned objects
+5. Email delivery monitoring
