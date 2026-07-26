@@ -1,4 +1,4 @@
-# TutorOS — Authorization Matrix (v1)
+# Dolphn — Authorization Matrix (v1)
 
 This is the contract the single server-side authz helper (`lib/auth`) must enforce.
 Every mutation follows **parse → authorize → mutate → revalidate**; the rows below

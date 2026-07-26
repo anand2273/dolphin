@@ -47,7 +47,7 @@ export default async function AcceptInvitePage({
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Already have a TutorOS student account?{" "}
+            Already have a Dolphn student account?{" "}
             <Link href="/login" className="underline">
               Sign in
             </Link>{" "}

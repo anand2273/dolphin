@@ -1,8 +1,8 @@
-<!-- TutorOS magic-link email (existing student invited to a class). Same
+<!-- Dolphn magic-link email (existing student invited to a class). Same
      reasoning as invite.html: the href is built from RedirectTo so /auth/confirm
      and the accept page share one origin, and the session cookie survives the
      redirect. -->
-<h2>Join your class on TutorOS</h2>
+<h2>Join your class on Dolphn</h2>
 <p>Your tutor has invited you to a class. Tap below to sign in and join.</p>
 <p>
   <a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=magiclink"

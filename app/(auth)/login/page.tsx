@@ -18,7 +18,7 @@ export default async function LoginPage() {
     <main className="flex min-h-screen items-center justify-center p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle className="text-xl">Sign in to TutorOS</CardTitle>
+          <CardTitle className="text-xl">Sign in to Dolphn</CardTitle>
           <CardDescription>Welcome back.</CardDescription>
         </CardHeader>
         <CardContent>

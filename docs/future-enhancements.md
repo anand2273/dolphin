@@ -1,4 +1,4 @@
-# TutorOS - Future Enhancements
+# Dolphn - Future Enhancements
 - Material Creation
 
 - Knowledge Base, Data Moat, Agentic Layer

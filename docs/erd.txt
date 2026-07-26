@@ -1,4 +1,4 @@
-TutorOS — v1 ERD (plain text)
+Dolphn — v1 ERD (plain text)
 =============================
 
 Legend:  PK = primary key   FK -> = foreign key   (sd) = has soft-delete (deleted_at)

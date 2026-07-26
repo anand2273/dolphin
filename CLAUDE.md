@@ -2,7 +2,7 @@
 
 ## Project
 
-**TutorOS** — an all-in-one student management app for freelance tutors.
+**Dolphn** — an all-in-one student management app for freelance tutors.
 
 v1 is a **session-centric file and homework system**. The AI layer (material generation, auto-marking, analytics) is deliberately deferred, but the v1 data model must make it possible later *without a schema rewrite*. Leave seams, not scaffolding.
 

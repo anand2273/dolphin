@@ -262,13 +262,13 @@ otp_expiry = 3600
 # Custom invite email: routes through our /auth/confirm (token_hash flow) so the
 # session is set server-side, then on to the accept page carried in `next`.
 [auth.email.template.invite]
-subject = "You've been invited to TutorOS"
+subject = "You've been invited to Dolphn"
 content_path = "./supabase/templates/invite.html"
 
 # Magic link — used when inviting an email that ALREADY has a student account
 # (Supabase can't "invite" an existing user). Routes through /auth/confirm too.
 [auth.email.template.magic_link]
-subject = "Join your class on TutorOS"
+subject = "Join your class on Dolphn"
 content_path = "./supabase/templates/magic_link.html"
 
 # Uncomment to customize notification email template

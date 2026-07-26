@@ -1,5 +1,5 @@
 /**
- * TutorOS — v1 Drizzle schema (design artifact for Checkpoint 1).
+ * Dolphn — v1 Drizzle schema (design artifact for Checkpoint 1).
  *
  * Conventions (per CLAUDE.md):
  *  - Session is the organising unit. Every material/assignment/submission is
