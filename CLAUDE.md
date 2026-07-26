@@ -34,6 +34,8 @@ If a task appears to require any of the above, **stop and ask** rather than buil
 | **Assignment** | Homework issued in a session. |
 | **Submission** | A student's response to an assignment. |
 | **Attachment** | A stored-file row. Materials and submissions both point at attachments. |
+| **Feedback** | A tutor's comment on a specific submission version. `author_type` reserves room for a future agent; v1 only ever writes tutor rows. |
+| **Topic** | An optional, tutor-applied tag on an assignment. The thing later analytics aggregate on. |
 
 Never introduce synonyms. If a new concept is genuinely needed, add it to this table in the same commit.
 
@@ -110,9 +112,25 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
 - Deleting a material is a soft delete; the object stays in the bucket. Student
   work and tutor uploads are not recoverable once the bytes are gone.
 
+## Documentation
+
+`docs/` carries the detail this file deliberately doesn't. Start at
+[`docs/README.md`](docs/README.md).
+
+- **[`docs/status.md`](docs/status.md) — read before assuming a feature exists.**
+  Several tables are in the schema with no code behind them; that is intentional.
+- [`docs/requirements.md`](docs/requirements.md) — FR-\*/NFR-\* with build status
+- [`docs/user-stories.md`](docs/user-stories.md) — US-\* with acceptance criteria
+- [`docs/authz-matrix.md`](docs/authz-matrix.md) — the contract `lib/auth` must satisfy
+- [`docs/erd.txt`](docs/erd.txt) · [`docs/checkpoint-1-decisions.md`](docs/checkpoint-1-decisions.md)
+- [`docs/deploy.md`](docs/deploy.md) — cloud runbook and its silent-failure traps
+- [`docs/future-enhancements.md`](docs/future-enhancements.md) · [`docs/ux-roadmap.md`](docs/ux-roadmap.md)
+
+Keep `docs/status.md` current in the same commit that changes what's built.
+
 ## Stack
 
-> Confirm this section with the project owner before the first commit; everything below assumes it.
+Settled and in production. No new dependencies without asking.
 
 - Next.js (App Router) + TypeScript
 - PostgreSQL + Drizzle ORM
@@ -120,14 +138,15 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
 - Tailwind + shadcn/ui
 - Zod for all input validation
 - Vitest for unit tests, Playwright for E2E
+- Deployed on Vercel; Supabase cloud for auth/storage/Postgres; Resend for email
 
-Boring and well-trodden is the point. No new dependencies without asking.
+Boring and well-trodden is the point.
 
 ## Commands
 
 ```
 pnpm dev            # dev server
-pnpm build          # production build
+pnpm build          # production build — see warning below
 pnpm lint
 pnpm typecheck
 pnpm test           # vitest
@@ -135,25 +154,46 @@ pnpm test:e2e       # playwright
 pnpm db:generate    # generate migration from schema
 pnpm db:migrate     # apply migrations
 pnpm db:studio
+pnpm sb:start       # local Supabase stack
+pnpm sb:stop
 ```
+
+Two ways to lose an afternoon here:
+
+- **Never run `pnpm build` while a dev server is running.** They share `.next`,
+  so the build clobbers the dev server's chunks and every route starts 500ing
+  with `Cannot find module './NNN.js'`. Recovery is `rm -rf .next` plus a dev
+  restart. Verify with `typecheck` + `test` instead.
+- **Migrations are Drizzle's, in `lib/db/migrations/`.** `supabase/migrations/`
+  does not exist, so `supabase db push` silently does nothing — and
+  `supabase db reset --linked` would **wipe the cloud database and rebuild it
+  from zero migrations**. Apply migrations with
+  `DATABASE_URL="<direct connection>" pnpm db:migrate`. Use the direct or session
+  pooler (5432) for DDL, never the transaction pooler (6543).
 
 ## Structure
 
 ```
 app/
-  (auth)/           # login, invite acceptance
-  (tutor)/          # tutor-only routes
-  (student)/        # student-only routes
-  api/
+  (auth)/               # login, signup, signup/student, link-expired
+  (tutor)/              # tutor-only: dashboard, classes/[classId]
+  (student)/            # student-only: student
+  sessions/[sessionId]/ # session detail — ONE route, serves both roles
+  invite/accept/        # invitation acceptance (NOT under (auth))
+  auth/confirm/         # email-link verification (token_hash flow)
+  api/                  # route handlers: materials download
 lib/
-  auth/             # session, role resolution, authz helpers
+  auth/                 # session, roles, guards, THE authz helper
   db/
-    schema.ts
-    queries/        # all reads
-  storage/          # signed URL minting, upload validation
-  validation/       # zod schemas
+    schema.ts           # all 15 tables
+    queries/            # all reads — each authorizes before returning rows
+    migrations/         # drizzle-owned; there is no supabase/migrations
+  storage/              # private bucket, opaque keys, signed URLs
+  validation/           # zod schemas
 components/
-  ui/               # shadcn primitives
+  ui/                   # shadcn primitives
+tests/                  # authz tests, negatives included
+docs/                   # see the Documentation section above
 ```
 
 ## Conventions
@@ -161,6 +201,7 @@ components/
 - Server Components by default. A `"use client"` component needs a one-line comment saying why.
 - All mutations are Server Actions colocated in `app/**/actions.ts`. Every action follows: **parse with Zod → authorize → mutate → revalidate.** Step 2 is never skipped, even for "obviously safe" actions.
 - No business logic in components. Reads live in `lib/db/queries/`, writes in actions.
+- **A resource both roles can read gets ONE route**, not a tutor copy and a student copy. Resolve the viewer's relationship once and hang role-specific controls off that result (see `app/sessions/[sessionId]/page.tsx`). Two routes means the same access rule written twice, and they stop agreeing after the first change nobody mirrors.
 - Actions return typed result objects (`{ ok: true, data }` / `{ ok: false, error }`). Do not throw strings; do not swallow errors.
 - Timestamps stored as UTC `timestamptz`. A session additionally stores the tutor's IANA timezone. Render in the viewer's local timezone.
 - File size and MIME allowlists live in one config module, not sprinkled at call sites.
@@ -178,8 +219,8 @@ Do **not** add LLM SDKs, vector stores, or embedding columns in v1.
 
 ## Testing
 
-- Every authorization rule gets a test, and the suite must include **negative** cases: student A cannot read student B's submission; tutor A cannot read tutor B's class; a student cannot issue an assignment.
-- One Playwright happy path end to end: tutor creates class → invites student → creates session → uploads material → issues assignment; student accepts invite → downloads material → submits → tutor sees the submission.
+- Every authorization rule gets a test, and the suite must include **negative** cases: student A cannot read student B's submission; tutor A cannot read tutor B's class; a student cannot issue an assignment. 45 tests today, all authorization-focused.
+- One Playwright happy path end to end: tutor creates class → invites student → creates session → uploads material → issues assignment; student accepts invite → downloads material → submits → tutor sees the submission. **Not built yet** — `pnpm test:e2e` has no config or specs behind it. Coverage today is unit-level authz plus manual verification.
 
 ## Working agreement
 
