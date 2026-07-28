@@ -1,0 +1,22 @@
+<!-- Dolphn password-reset email.
+
+     The href is built from RedirectTo, NOT SiteURL and NOT ConfirmationURL.
+     RedirectTo is the /auth/confirm?next=/reset-password URL that
+     requestPasswordReset minted on the origin the user is actually on. Building
+     from SiteURL puts /auth/confirm on a different host than the reset page, and
+     the session cookie verifyOtp sets is host-scoped — so it does not survive
+     that redirect and the reset form has no session to act on. ConfirmationURL
+     is worse: it returns tokens in a URL fragment, which a Server Component
+     cannot read at all.
+
+     Keep template actions out of these comments: Go's html/template refuses to
+     parse them here. -->
+<h2>Reset your Dolphn password</h2>
+<p>Tap the button below to choose a new password. The link works once and expires.</p>
+<p>
+  <a href="{{ .RedirectTo }}&token_hash={{ .TokenHash }}&type=recovery"
+     style="display:inline-block;padding:10px 16px;background:#2b3a67;color:#fff;border-radius:6px;text-decoration:none">
+    Set a new password
+  </a>
+</p>
+<p style="color:#666;font-size:12px">If you didn’t ask to reset your password, you can ignore this email — your current password still works.</p>

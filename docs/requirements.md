@@ -23,6 +23,17 @@ task appears to need one, stop and ask rather than building a partial version.
    as a tutor.
 6. Self-signup is refused for any email that already has an auth account,
    including an unclaimed invitation shell.
+7. Either role can reset a forgotten password from `/forgot-password`. The
+   response is identical whether or not the address has an account — this
+   endpoint is not an account-enumeration oracle. (FR-1.6 discloses the opposite
+   on purpose, because it is buying a security gate; here there is nothing to
+   buy.)
+8. A recovery link grants a session, so setting a new password requires **both**
+   that session and a recovery marker minted for that same user by
+   `/auth/confirm`. A session alone must never be sufficient: that would make
+   `/reset-password` a change-password form with no old-password prompt.
+9. A completed reset revokes every other session for that account, and the
+   recovery marker is single-use.
 
 ### FR-2 — Classes · Built
 
@@ -162,7 +173,7 @@ which is why RLS is defense-in-depth only and not the security boundary.
 
 Every authorization rule has a test, and the suite includes **negative** cases:
 student A cannot read student B's submission, tutor A cannot read tutor B's
-class, a student cannot issue an assignment. 45 tests currently.
+class, a student cannot issue an assignment. 56 tests currently.
 
 **Gap:** no Playwright E2E happy path yet, though CLAUDE.md calls for one.
 

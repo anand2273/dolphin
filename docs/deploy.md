@@ -92,16 +92,22 @@ the accept page with no session and gets bounced to `/login` — where, having n
 set a password, they are stuck. That is exactly the bug fixed in `075786c`, and
 the stock cloud templates reintroduce it.
 
-Replace two templates with the contents of this repo:
+Replace three templates with the contents of this repo:
 
 | Template | Paste from | Subject |
 |---|---|---|
-| **Invite user** | `supabase/templates/invite.html` | You've been invited to TutorOS |
-| **Magic Link** | `supabase/templates/magic_link.html` | Join your class on TutorOS |
+| **Invite user** | `supabase/templates/invite.html` | You've been invited to Dolphn |
+| **Magic Link** | `supabase/templates/magic_link.html` | Join your class on Dolphn |
+| **Reset Password** | `supabase/templates/recovery.html` | Reset your Dolphn password |
 
-Both build their href from `{{ .RedirectTo }}`, which our invite action sets to
-`/auth/confirm?next=/invite/accept/<token>` on the origin the tutor is using. The
-whole chain then stays on one host and the session cookie survives.
+All three build their href from `{{ .RedirectTo }}`, which our actions set to
+`/auth/confirm?next=…` on the origin the user is actually on. The whole chain
+then stays on one host and the session cookie survives.
+
+The reset template fails the same way and just as quietly: a stock **Reset
+Password** template lands the user on `/reset-password` with no session, where
+they get the "open this from your reset email" card and no way forward. There is
+no error anywhere — it looks like the link is broken.
 
 ## 6. Custom SMTP with Resend
 

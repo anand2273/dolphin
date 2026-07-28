@@ -1,13 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { invitations, profiles, sessions } from "@/lib/db/schema";
 import { requireAuthUser } from "@/lib/auth/session";
 import { assertClassOwner, AuthzError } from "@/lib/auth/authz";
 import { findAccountByEmail } from "@/lib/auth/account-lookup";
+import { requestOrigin } from "@/lib/auth/origin";
 import { createClient } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "@/lib/auth/supabase-admin";
 import { recordEvent } from "@/lib/db/events";
@@ -17,13 +17,6 @@ import { createSessionSchema } from "@/lib/validation/session";
 import type { FormState } from "@/lib/types";
 
 const INVITE_TTL_DAYS = 7;
-
-async function requestOrigin(): Promise<string> {
-  const h = await headers();
-  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
-  const proto = h.get("x-forwarded-proto") ?? "http";
-  return `${proto}://${host}`;
-}
 
 /** Invite a student by email to a class. Owner-only. */
 export async function inviteStudent(

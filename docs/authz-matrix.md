@@ -32,6 +32,8 @@ resource* via the relationship check (owner / enrolled / none).
 | 2 | Log in | ✔ | ✔ | ✔ | ✔ (public) |
 | 3 | View / edit **own** profile | ✔ | ✔ | ✔ | ✘ |
 | 4 | Self-register a student account (no invite) | ✔ | ✔ | ✔ | ✔ (public) |
+| 4a | Request a password reset email | ✔ | ✔ | ✔ | ✔ (public) ⁶ |
+| 4b | Set a new password | ✔ ⁷ | ✔ ⁷ | ✔ ⁷ | ✘ |
 | **Class** |
 | 5 | Create class | ✔ | ✘ | ✘ | ✘ |
 | 6 | View class (list / detail) | ✔ | ✔ | ✘ | ✘ |
@@ -91,6 +93,17 @@ resource* via the relationship check (owner / enrolled / none).
    A tutor of a *different* class is a **Stranger** here → ✘.
 5. Submissions are **append-only**; "delete" is a tutor-only soft-delete for
    accidental-upload cleanup. Students cannot delete or overwrite submitted work.
+6. **The response is identical for a registered and an unregistered address.**
+   Requesting a reset is public by necessity — the whole point is that the
+   requester cannot sign in — so the only thing to protect is whether an address
+   has an account. Row 4 discloses that on purpose (it buys the invite-shell
+   gate); this row must not.
+7. **A session is not sufficient authority.** A recovery link *is* a sign-in, so
+   setting a password requires the session **plus** the single-use recovery
+   marker `/auth/confirm` mints for that same user id. Without the second
+   condition, "set a new password" collapses into row 3 and anyone at an
+   unattended signed-in browser can take the account over. Completing a reset
+   revokes every other session for that account.
 
 ## The two questions the helper asks on every request
 
@@ -115,3 +128,5 @@ resource id — never taken from the client.
 - Expired / revoked / already-accepted invite **cannot** be accepted. (row 12)
 - Student **cannot** delete or overwrite a submission; resubmit only appends. (rows 30,35)
 - Signed URL minted for user X's submission is **not** issued to user Y. (row 33)
+- A signed-in session with **no** recovery marker cannot set a new password, and
+  a marker minted for user X cannot be spent by user Y. (row 4b / footnote 7)

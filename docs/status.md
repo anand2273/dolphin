@@ -4,7 +4,7 @@
 with no code behind them yet — that is deliberate (see the forward-compat hooks
 in [`../CLAUDE.md`](../CLAUDE.md)), not an oversight.
 
-Last updated: end of Checkpoint 5, first cloud deployment.
+Last updated: password reset (post-CP5).
 
 ---
 
@@ -18,10 +18,11 @@ Last updated: end of Checkpoint 5, first cloud deployment.
 | CP4 | Sessions — create, list, edit, detail page | Done |
 | CP5 | Materials — private bucket, signed upload/download | Done |
 | — | Cloud deployment (Vercel + Supabase + Resend) | Done |
+| — | Password reset (forgot → email → set new) | Done |
 | CP6 | Assignments and submissions | **Not started** |
 | CP7+ | Everything in [`future-enhancements.md`](future-enhancements.md) | Not started |
 
-**45 tests, all passing.** Every one is an authorization test; the suite is
+**56 tests, all passing.** Every one is an authorization test; the suite is
 deliberately weighted toward negative cases.
 
 ---
@@ -99,6 +100,32 @@ Per-session file upload and download against a private bucket.
 
 Bytes never pass through Next, which is what keeps a 25 MB upload working on
 Vercel's ~4.5 MB request cap.
+
+## Password reset · US-A1 · FR-1.7–1.9
+
+Both roles, reusing the invite flow's plumbing: one origin end to end, a
+`{{ .RedirectTo }}` template, and `/auth/confirm` as the single verification hop.
+
+- `app/(auth)/forgot-password/` — `resetPasswordForEmail`, `redirectTo` set to
+  `/auth/confirm?next=/reset-password`. The reply is identical for a registered
+  and an unregistered address; real failures (rate limit, SMTP) are still
+  surfaced, because GoTrue returns success for an unknown address anyway and so
+  an error discloses nothing.
+- `lib/auth/recovery.ts` — **the reason this is more than a form.** A recovery
+  link produces an ordinary session, so a session alone cannot be the authority
+  to set a password; that would make `/reset-password` a change-password page
+  with no old-password prompt, and any unattended signed-in browser an account
+  takeover. `/auth/confirm` mints a short-lived, user-bound, httpOnly marker on
+  `type=recovery`; `resetPassword` requires it and spends it.
+- `app/(auth)/actions.ts` — on success, `signOut({ scope: "others" })`, so a
+  reset prompted by suspicion actually evicts the other party.
+- `lib/auth/origin.ts` — the Host-header origin helper, now shared with the
+  invite action instead of duplicated.
+- `supabase/templates/recovery.html` + `[auth.email.template.recovery]`.
+  **A cloud project needs this pasted into the dashboard** (`deploy.md` §5); the
+  stock template uses `{{ .ConfirmationURL }}` and fails in the fragment.
+- `tests/authz.password-reset.test.ts` — 11 tests, mostly negative: no session,
+  session without a marker, a marker belonging to someone else, and replay.
 
 ## Deployment
 

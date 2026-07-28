@@ -170,11 +170,27 @@ because my tutor is marking against both.*
 
 ---
 
+## Both roles
+
+### US-A1 · Reset a forgotten password · Built · FR-1
+*As a tutor or student who has forgotten my password, I want to get back into my
+account from my email, without asking anyone.*
+
+- "Forgot password?" sits on the login form, where I notice the problem
+- I get the same answer whether or not that address has an account, so the page
+  cannot be used to find out who has one
+- The emailed link takes me straight to a set-a-new-password form
+- A used or expired link offers me a fresh one, never a login form I still can't use
+- Setting a new password signs out every other session — if someone else was in
+  my account, the reset actually removes them
+
+---
+
 ## Story → requirement coverage
 
 | Story | Requirement | Status |
 |---|---|---|
-| US-T1, US-S1 | FR-1 Accounts and roles | Built |
+| US-T1, US-S1, US-A1 | FR-1 Accounts and roles | Built |
 | US-T2, US-T5 | FR-2 Classes | Built |
 | US-T3, US-T4, US-S1, US-S2 | FR-3 Invitations | Built |
 | US-T6, US-T7, US-S3 | FR-4 Sessions | Built |

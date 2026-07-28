@@ -1,6 +1,7 @@
 import { type EmailOtpType } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/auth/supabase-server";
+import { markRecoverySession } from "@/lib/auth/recovery";
 
 /**
  * Verifies an emailed auth link (invite, magic link, recovery) using the
@@ -45,8 +46,17 @@ export async function GET(request: NextRequest) {
 
   if (tokenHash && type) {
     const supabase = await createSupabaseServerClient();
-    const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
+    const { data, error } = await supabase.auth.verifyOtp({
+      type,
+      token_hash: tokenHash,
+    });
     if (!error) {
+      // A recovery link produces an ordinary session, indistinguishable from a
+      // password sign-in. Mark it, so /reset-password can tell "arrived from the
+      // reset email" from "was already signed in" — see lib/auth/recovery.ts.
+      if (type === "recovery" && data.user) {
+        await markRecoverySession(data.user.id);
+      }
       return NextResponse.redirect(new URL(nextPath, origin));
     }
   }

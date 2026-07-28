@@ -78,9 +78,21 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
   supabase_kong_dolphin supabase_auth_dolphin`.** Kong serves those files with
   the byte length it captured at container start, so an edited template arrives
   truncated and GoTrue fails with "ends in a non-text context".
+- **A recovery link is a sign-in.** `verifyOtp` returns an ordinary session, so
+  "has a session" is not authority to set a new password — that would make
+  `/reset-password` a change-password form with no old-password prompt, and any
+  unattended signed-in browser an account takeover (`secure_password_change` is
+  off, so GoTrue won't ask either). `/auth/confirm` mints a short-lived,
+  user-bound, httpOnly marker on `type=recovery`; `resetPassword` requires it
+  and spends it. Do not reduce that to a session check.
+- **`/forgot-password` answers identically for a registered and an unregistered
+  address.** This is the opposite of the signup gate below, on purpose: that
+  disclosure buys a security property, this one would buy an enumeration oracle.
 - **Never send an invitee to `/login` on failure.** They have no password yet, so
   a login form is a dead end that also leaves their address unusable. Failures go
   to `/link-expired`; an unauthenticated hit on the accept page explains itself.
+  The same holds for a dead *recovery* link — someone resetting a password does
+  not know it — so `/link-expired` offers a fresh reset link instead.
 - **Self-signup is refused for any address that already has a GoTrue account**
   (`findAccountByEmail`). This is a security gate: `inviteUserByEmail` creates an
   auth row *before* email control is proved, and with confirmations disabled
@@ -175,7 +187,7 @@ Two ways to lose an afternoon here:
 
 ```
 app/
-  (auth)/               # login, signup, signup/student, link-expired
+  (auth)/               # login, signup, signup/student, forgot/reset-password, link-expired
   (tutor)/              # tutor-only: dashboard, classes/[classId]
   (student)/            # student-only: student
   sessions/[sessionId]/ # session detail — ONE route, serves both roles
@@ -183,7 +195,7 @@ app/
   auth/confirm/         # email-link verification (token_hash flow)
   api/                  # route handlers: materials download
 lib/
-  auth/                 # session, roles, guards, THE authz helper
+  auth/                 # session, roles, guards, request origin, recovery gate, THE authz helper
   db/
     schema.ts           # all 15 tables
     queries/            # all reads — each authorizes before returning rows
@@ -219,7 +231,7 @@ Do **not** add LLM SDKs, vector stores, or embedding columns in v1.
 
 ## Testing
 
-- Every authorization rule gets a test, and the suite must include **negative** cases: student A cannot read student B's submission; tutor A cannot read tutor B's class; a student cannot issue an assignment. 45 tests today, all authorization-focused.
+- Every authorization rule gets a test, and the suite must include **negative** cases: student A cannot read student B's submission; tutor A cannot read tutor B's class; a student cannot issue an assignment. 56 tests today, all authorization-focused.
 - One Playwright happy path end to end: tutor creates class → invites student → creates session → uploads material → issues assignment; student accepts invite → downloads material → submits → tutor sees the submission. **Not built yet** — `pnpm test:e2e` has no config or specs behind it. Coverage today is unit-level authz plus manual verification.
 
 ## Working agreement

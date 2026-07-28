@@ -271,6 +271,10 @@ content_path = "./supabase/templates/invite.html"
 subject = "Join your class on Dolphn"
 content_path = "./supabase/templates/magic_link.html"
 
+[auth.email.template.recovery]
+subject = "Reset your Dolphn password"
+content_path = "./supabase/templates/recovery.html"
+
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]
 # enabled = true

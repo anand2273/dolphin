@@ -79,5 +79,5 @@ tests/             authz tests, negatives included
 pnpm typecheck && pnpm lint && pnpm test
 ```
 
-45 tests, all authorization-focused. Adding a feature that touches access
+56 tests, all authorization-focused. Adding a feature that touches access
 control without adding a negative test is not finished work.
