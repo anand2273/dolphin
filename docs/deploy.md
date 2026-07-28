@@ -7,8 +7,10 @@ Work top to bottom. Steps 4 and 5 are the ones that silently half-work if skippe
 — the app will look fine and invitations will quietly break.
 
 Throughout, `PROJECT_REF` is your Supabase project ref (the subdomain in
-`https://<ref>.supabase.co`) and `APP_URL` is your production URL, e.g.
-`https://tutoros.vercel.app` — **no trailing slash**.
+`https://<ref>.supabase.co`) and `APP_URL` is your production URL —
+`https://getdolphn.com`, **no trailing slash**. The `*.vercel.app` names still
+resolve and still serve the app, so every origin users can actually reach has to
+be allowlisted in step 4, not just the canonical one.
 
 ---
 
@@ -69,17 +71,28 @@ Fallback, if the CLI misbehaves — dashboard → Storage → New bucket:
 Dashboard → Authentication → URL Configuration:
 
 - **Site URL**: `APP_URL`
-- **Redirect URLs**, one per line:
+- **Redirect URLs**, one per line — **all four**:
   ```
+  https://getdolphn.com/**
+  https://www.getdolphn.com/**
   https://dolphin-ruddy-ten.vercel.app/**
   https://*-anand2273s-projects.vercel.app/**
   ```
 
-The second line covers preview deployments (`<project>-git-<branch>-<scope>
-.vercel.app`). It matters because **every** emailed link — invite, magic link and
-password reset — is built from the **request's own host**, so one sent from a
-preview mints a preview-host URL, and GoTrue refuses any `redirectTo` that isn't
-on this allowlist.
+Every emailed link — invite, magic link and password reset — is built from the
+**request's own host**, and GoTrue refuses any `redirectTo` not on this list. So
+this is not "the production URL"; it is *every origin a user might be browsing
+when they trigger an email*:
+
+- the custom domain, which is the one real users are on;
+- `www.`, if the domain serves it — a different host is a different entry;
+- the `*.vercel.app` production alias, which keeps resolving after you add a
+  custom domain and is easy to forget;
+- the last line, preview deployments (`<project>-git-<branch>-<scope>.vercel.app`).
+
+Adding a custom domain **does not** update this list, and nothing warns you. The
+symptom is that email links point at whatever the Site URL is rather than the
+domain the user was actually on.
 
 **The refusal is silent.** GoTrue does not error; it substitutes the Site URL and
 sends the mail anyway. The symptom is a link pointing at the *wrong host* with
