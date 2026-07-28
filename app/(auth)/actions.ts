@@ -1,7 +1,6 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/auth/supabase-server";
 import { findAccountByEmail } from "@/lib/auth/account-lookup";
 import { ensureProfile } from "@/lib/auth/ensure-profile";
@@ -137,24 +136,13 @@ export async function requestPasswordReset(
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  // A plain anon client, NOT createSupabaseServerClient: @supabase/ssr defaults
-  // to the PKCE flow, which emails a `pkce_`-prefixed token that must be
-  // exchanged together with a code verifier held in the cookies of the browser
-  // that made the request. /auth/confirm verifies with `verifyOtp({ token_hash
-  // })`, so a PKCE token cannot be verified there at all — the link dies at the
-  // confirm hop. `flowType` is pinned rather than left to the default so this
-  // cannot quietly become PKCE again in a later supabase-js release.
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      auth: {
-        flowType: "implicit",
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    },
-  );
+  // NOTE: @supabase/ssr defaults to the PKCE flow, so this emails a
+  // `pkce_`-prefixed token. /auth/confirm verifies with
+  // `verifyOtp({ token_hash })`, which cannot verify a PKCE token — that path
+  // expects a plain OTP hash. If the link dies at the confirm hop rather than in
+  // the mail client, this is why; see commit ee92d77 for the implicit-flow
+  // version that produced a verifiable token.
+  const supabase = await createSupabaseServerClient();
   const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
     redirectTo: `${await requestOrigin()}/auth/confirm?next=/reset-password`,
   });
