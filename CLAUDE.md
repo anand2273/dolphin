@@ -78,6 +78,19 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
   supabase_kong_dolphin supabase_auth_dolphin`.** Kong serves those files with
   the byte length it captured at container start, so an edited template arrives
   truncated and GoTrue fails with "ends in a non-text context".
+- **Never mint an emailed link with `createSupabaseServerClient`.**
+  `@supabase/ssr` defaults to the **PKCE** flow, which emails a
+  `pkce_`-prefixed token that must be exchanged with a code verifier sitting in
+  the requesting browser's cookies. `/auth/confirm` uses
+  `verifyOtp({ token_hash })`, so a PKCE token can never verify there. Use a
+  plain `@supabase/supabase-js` client with `flowType: "implicit"` — as
+  `inviteStudent` and `requestPasswordReset` both do.
+- **A rejected `redirectTo` does not raise an error.** GoTrue falls back to Site
+  URL and sends the mail regardless, so an origin missing from the dashboard
+  redirect allowlist shows up as a link on the *wrong host* with its path
+  stripped — and, because our templates append `&token_hash=` to
+  `{{ .RedirectTo }}`, as a mangled URL the browser refuses. Preview deploys
+  need the Vercel wildcard; see deploy.md §4.
 - **A recovery link is a sign-in.** `verifyOtp` returns an ordinary session, so
   "has a session" is not authority to set a new password — that would make
   `/reset-password` a change-password form with no old-password prompt, and any

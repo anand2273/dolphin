@@ -71,15 +71,28 @@ Dashboard → Authentication → URL Configuration:
 - **Site URL**: `APP_URL`
 - **Redirect URLs**, one per line:
   ```
-  https://tutoros.vercel.app/**
-  https://*-YOUR-VERCEL-SCOPE.vercel.app/**
+  https://dolphin-ruddy-ten.vercel.app/**
+  https://*-anand2273s-projects.vercel.app/**
   ```
 
-The second line covers preview deployments. It matters because `inviteStudent`
-builds the confirmation link from the **request's own host** — so an invite sent
-from a preview deploy mints a preview-host URL, and GoTrue refuses any
-`redirectTo` that isn't on this allowlist. Without the wildcard, invites work in
-production and fail on previews with no obvious cause.
+The second line covers preview deployments (`<project>-git-<branch>-<scope>
+.vercel.app`). It matters because **every** emailed link — invite, magic link and
+password reset — is built from the **request's own host**, so one sent from a
+preview mints a preview-host URL, and GoTrue refuses any `redirectTo` that isn't
+on this allowlist.
+
+**The refusal is silent.** GoTrue does not error; it substitutes the Site URL and
+sends the mail anyway. The symptom is a link pointing at the *wrong host* with
+the path stripped — our templates append `&token_hash=…` to `{{ .RedirectTo }}`,
+so a bare Site URL with no `?` produces a mangled URL the browser rejects
+outright:
+
+```
+https://dolphin-ruddy-ten.vercel.app&token_hash=…&type=recovery
+```
+
+If you see that, it is this allowlist, not the template. Without the wildcard,
+auth email works in production and fails on every preview with no obvious cause.
 
 ## 5. Email templates (dashboard) — **the one that silently breaks invites**
 

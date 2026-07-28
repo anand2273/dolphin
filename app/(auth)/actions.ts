@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
 import { createSupabaseServerClient } from "@/lib/auth/supabase-server";
 import { findAccountByEmail } from "@/lib/auth/account-lookup";
 import { ensureProfile } from "@/lib/auth/ensure-profile";
@@ -120,7 +121,10 @@ export async function logIn(
  *
  * `redirectTo` is built from the request's own origin (see requestOrigin), so
  * the confirm hop and the reset page share the host that will hold the session
- * cookie. `next` is a path, never an absolute URL.
+ * cookie. `next` is a path, never an absolute URL. Note this means a preview
+ * deployment mints a preview-host link, which GoTrue rejects unless the Vercel
+ * wildcard is on the redirect allowlist — and a rejected `redirectTo` does not
+ * error, it silently falls back to Site URL. See deploy.md §4.
  */
 export async function requestPasswordReset(
   _prev: FormState,
@@ -133,7 +137,24 @@ export async function requestPasswordReset(
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
 
-  const supabase = await createSupabaseServerClient();
+  // A plain anon client, NOT createSupabaseServerClient: @supabase/ssr defaults
+  // to the PKCE flow, which emails a `pkce_`-prefixed token that must be
+  // exchanged together with a code verifier held in the cookies of the browser
+  // that made the request. /auth/confirm verifies with `verifyOtp({ token_hash
+  // })`, so a PKCE token cannot be verified there at all — the link dies at the
+  // confirm hop. `flowType` is pinned rather than left to the default so this
+  // cannot quietly become PKCE again in a later supabase-js release.
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      auth: {
+        flowType: "implicit",
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+    },
+  );
   const { error } = await supabase.auth.resetPasswordForEmail(parsed.data.email, {
     redirectTo: `${await requestOrigin()}/auth/confirm?next=/reset-password`,
   });
