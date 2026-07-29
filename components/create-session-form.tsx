@@ -5,14 +5,20 @@
 import { useState } from "react";
 import { createSession } from "@/app/(tutor)/classes/[classId]/actions";
 import { SessionForm } from "@/components/session-form";
+import { useFormDialog } from "@/components/ui/form-dialog";
 
 export function CreateSessionForm({ classId }: { classId: string }) {
   // Remounting SessionForm is what resets its controlled datetime field.
   const [attempt, setAttempt] = useState(0);
+  const dialog = useFormDialog();
 
   const action = async (prev: Parameters<typeof createSession>[1], formData: FormData) => {
     const result = await createSession(classId, prev, formData);
-    if (result.ok) setAttempt((n) => n + 1);
+    if (result.ok) {
+      setAttempt((n) => n + 1);
+      // Inside a FormDialog the new lesson row is the acknowledgement.
+      dialog?.close();
+    }
     return result;
   };
 

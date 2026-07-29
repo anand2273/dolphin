@@ -8,10 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useFormDialog } from "@/components/ui/form-dialog";
 import type { FormState } from "@/lib/types";
 
 export function InviteStudentForm({ classId }: { classId: string }) {
   const boundAction = inviteStudent.bind(null, classId);
+  const dialog = useFormDialog();
   const [state, formAction, pending] = useActionState<FormState, FormData>(
     boundAction,
     {},
@@ -19,8 +21,12 @@ export function InviteStudentForm({ classId }: { classId: string }) {
   const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
-    if (state.ok) formRef.current?.reset();
-  }, [state]);
+    if (state.ok) {
+      formRef.current?.reset();
+      // Inside a FormDialog the pending-invitation row is the acknowledgement.
+      dialog?.close();
+    }
+  }, [state, dialog]);
 
   return (
     <form ref={formRef} action={formAction} className="space-y-4">

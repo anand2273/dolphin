@@ -75,13 +75,14 @@ data-fetching routes.
 
 ## P2 — Would degrade quickly with real usage
 
-### 6. Sessions are one flat, ascending list
-Every lesson for a class, oldest first, no grouping or pagination. After a term
-of weekly lessons the next lesson is somewhere in the middle of a long scroll.
+### 6. Sessions are one flat, ascending list — **mostly done**
+The tutor's class page now splits **Upcoming** (ascending) from **Past**
+(collapsed behind a native `<details>`, reverse-chronological), grouped at
+render time from `scheduledAt`.
 
-- Split **Upcoming** and **Past**, with past collapsed and reverse-chronological
-- Paginate or lazily load past lessons
-- `app/(tutor)/classes/[classId]/page.tsx`, `app/(student)/student/page.tsx`
+- Still open: pagination/lazy-loading of past lessons — a term of lessons all
+  render inside the collapsed section today.
+- Still open: the student dashboard's inline lists (see #7) are still flat.
 
 ### 7. The student dashboard inlines everything
 Every class renders all its lessons inline. Fine for one class, unusable at five.

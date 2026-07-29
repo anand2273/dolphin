@@ -27,6 +27,7 @@ export function TypeToConfirmButton({
   confirmLabel,
   variant = "destructive",
   size = "sm",
+  triggerClassName,
   children,
 }: {
   /** A FormState Server Action with its subject already bound. */
@@ -38,6 +39,8 @@ export function TypeToConfirmButton({
   confirmLabel: string;
   variant?: ButtonProps["variant"];
   size?: ButtonProps["size"];
+  /** Extra classes for the trigger, e.g. the quiet danger-link treatment. */
+  triggerClassName?: string;
   children: React.ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -60,6 +63,7 @@ export function TypeToConfirmButton({
         type="button"
         variant={variant}
         size={size}
+        className={triggerClassName}
         onClick={() => dialogRef.current?.showModal()}
       >
         {children}

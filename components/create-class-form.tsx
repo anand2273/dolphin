@@ -8,18 +8,24 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useFormDialog } from "@/components/ui/form-dialog";
 import type { FormState } from "@/lib/types";
 
 export function CreateClassForm() {
   const formRef = useRef<HTMLFormElement>(null);
+  const dialog = useFormDialog();
   const [state, formAction, pending] = useActionState<FormState, FormData>(
     createClass,
     {},
   );
 
   useEffect(() => {
-    if (state.ok) formRef.current?.reset();
-  }, [state]);
+    if (state.ok) {
+      formRef.current?.reset();
+      // Inside a FormDialog the new class row is the acknowledgement.
+      dialog?.close();
+    }
+  }, [state, dialog]);
 
   return (
     <form ref={formRef} action={formAction} className="space-y-4">
