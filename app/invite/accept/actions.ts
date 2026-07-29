@@ -35,7 +35,7 @@ async function finalizeAcceptance(
       .insert(enrollments)
       .values({ classId: invitation.classId, studentId: user.id })
       .onConflictDoNothing();
-    await tx
+    const consumed = await tx
       .update(invitations)
       .set({
         status: "accepted",
@@ -45,17 +45,21 @@ async function finalizeAcceptance(
       })
       .where(
         and(eq(invitations.id, invitation.id), eq(invitations.status, "pending")),
+      )
+      .returning({ id: invitations.id });
+    // A concurrent duplicate accept updates zero rows — record the event once.
+    if (consumed.length > 0) {
+      await recordEvent(
+        {
+          actorId: user.id,
+          verb: "enrollment.created",
+          subjectType: "enrollment",
+          subjectId: invitation.classId,
+          payload: { invitationId: invitation.id },
+        },
+        tx,
       );
-    await recordEvent(
-      {
-        actorId: user.id,
-        verb: "enrollment.created",
-        subjectType: "enrollment",
-        subjectId: invitation.classId,
-        payload: { invitationId: invitation.id },
-      },
-      tx,
-    );
+    }
   });
 }
 
@@ -86,7 +90,16 @@ export async function acceptInvitation(
     invitation: row ? facts(row.invitation) : null,
     userEmail: user.email,
   });
-  if (!verdict.ok) return { error: inviteRejectionMessage(verdict.reason) };
+  if (!verdict.ok) {
+    // Re-clicking a link they already accepted isn't an error — just go in.
+    if (
+      verdict.reason === "already_accepted" &&
+      row?.invitation.acceptedByUserId === user.id
+    ) {
+      redirect("/student");
+    }
+    return { error: inviteRejectionMessage(verdict.reason) };
+  }
 
   // Strict separation: a tutor account cannot join a class as a student.
   const existing = await getProfile(user.id);
