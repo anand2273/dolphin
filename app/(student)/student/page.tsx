@@ -1,24 +1,27 @@
-import Link from "next/link";
 import { requireStudent } from "@/lib/auth/guards";
 import { listSessionsForClass } from "@/lib/db/queries/sessions";
-import { SessionDateTime, SessionWhen } from "@/components/session-datetime";
+import { DateChip, SessionDateTime } from "@/components/session-datetime";
 import {
   listEnrolledClasses,
   listPendingInvitesForEmail,
 } from "@/lib/db/queries/invitations";
 import { acceptPendingInvite } from "@/app/invite/accept/actions";
+import { Greeting, TodayLine } from "@/components/greeting";
 import { Page, PageHeader } from "@/components/page";
 import { Button } from "@/components/ui/button";
+import { Section, SectionLabel } from "@/components/ui/section";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  Chevron,
+  Panel,
+  PanelRow,
+  RowEnd,
+  RowMain,
+  RowMeta,
+  RowTitle,
+} from "@/components/ui/panel";
 
 export default async function StudentHome() {
-  const { user } = await requireStudent();
+  const { user, profile } = await requireStudent();
 
   const [classes, pendingInvites] = await Promise.all([
     listEnrolledClasses(user.id),
@@ -38,79 +41,81 @@ export default async function StudentHome() {
 
   return (
     <Page>
-      <PageHeader title="Your classes" />
+      <PageHeader
+        meta={<TodayLine />}
+        title={<Greeting name={profile?.fullName ?? user.email} />}
+      />
 
       {pendingInvites.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-sm font-medium text-muted-foreground">
-            Invitations
-          </h2>
-          {pendingInvites.map(({ invitation, className, tutorName }) => (
-            <Card key={invitation.id}>
-              <CardContent className="flex items-center justify-between p-4">
-                <div>
-                  <p className="text-sm font-medium">{className}</p>
-                  <p className="text-xs text-muted-foreground">
-                    from {tutorName ?? "a tutor"}
-                  </p>
-                </div>
-                <form action={acceptPendingInvite.bind(null, invitation.id)}>
-                  <Button size="sm" type="submit">
-                    Accept
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
-          ))}
-        </section>
+        <Section aria-label="Invitations">
+          <SectionLabel>Invitations</SectionLabel>
+          <Panel>
+            {pendingInvites.map(({ invitation, className, tutorName }) => (
+              <PanelRow key={invitation.id}>
+                <RowMain>
+                  <RowTitle>{className}</RowTitle>
+                  <RowMeta>from {tutorName ?? "a tutor"}</RowMeta>
+                </RowMain>
+                <RowEnd>
+                  <form action={acceptPendingInvite.bind(null, invitation.id)}>
+                    <Button size="sm" type="submit">
+                      Accept
+                    </Button>
+                  </form>
+                </RowEnd>
+              </PanelRow>
+            ))}
+          </Panel>
+        </Section>
       )}
 
       {classes.length === 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">No classes yet</CardTitle>
-            <CardDescription>
-              When your tutor invites you, your class will appear here.
-            </CardDescription>
-          </CardHeader>
-        </Card>
+        <Panel>
+          <PanelRow>
+            <RowMain>
+              <RowTitle>No classes yet</RowTitle>
+              <RowMeta>
+                When your tutor invites you, your class will appear here.
+              </RowMeta>
+            </RowMain>
+          </PanelRow>
+        </Panel>
       ) : (
-        <div className="space-y-3">
-          {classes.map((c) => (
-            <Card key={c.classId}>
-              <CardHeader>
-                <CardTitle className="text-base">{c.name}</CardTitle>
-                <CardDescription>
-                  {c.subject ? `${c.subject} · ` : ""}
-                  {c.tutorName ?? "Your tutor"}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-1">
-                {(sessionsByClass.get(c.classId) ?? []).length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    No lessons scheduled yet.
-                  </p>
-                ) : (
-                  sessionsByClass.get(c.classId)!.map((s) => (
-                    <Link
-                      key={s.id}
-                      href={`/sessions/${s.id}`}
-                      className="flex items-center justify-between gap-4 rounded px-2 py-2 hover:bg-muted"
-                    >
-                      <div>
-                        <p className="text-sm">{s.title ?? "Untitled lesson"}</p>
-                        <p className="text-xs text-muted-foreground">
-                          <SessionDateTime at={s.scheduledAt} />
-                        </p>
-                      </div>
-                      <SessionWhen at={s.scheduledAt} />
-                    </Link>
-                  ))
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        classes.map((c) => (
+          <Section key={c.classId} aria-label={c.name}>
+            <div>
+              <h2 className="font-display text-base font-semibold tracking-tight">
+                {c.name}
+              </h2>
+              <p className="text-[12.5px] text-muted-foreground">
+                {c.subject ? `${c.subject} · ` : ""}
+                {c.tutorName ?? "Your tutor"}
+              </p>
+            </div>
+            <Panel>
+              {(sessionsByClass.get(c.classId) ?? []).length === 0 ? (
+                <PanelRow>
+                  <RowMeta>No lessons scheduled yet.</RowMeta>
+                </PanelRow>
+              ) : (
+                sessionsByClass.get(c.classId)!.map((s) => (
+                  <PanelRow key={s.id} href={`/sessions/${s.id}`}>
+                    <DateChip at={s.scheduledAt} />
+                    <RowMain>
+                      <RowTitle>{s.title ?? "Untitled lesson"}</RowTitle>
+                      <RowMeta>
+                        <SessionDateTime at={s.scheduledAt} />
+                      </RowMeta>
+                    </RowMain>
+                    <RowEnd>
+                      <Chevron />
+                    </RowEnd>
+                  </PanelRow>
+                ))
+              )}
+            </Panel>
+          </Section>
+        ))
       )}
     </Page>
   );
