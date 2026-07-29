@@ -36,12 +36,14 @@ If a task appears to require any of the above, **stop and ask** rather than buil
 | **Attachment** | A stored-file row. Materials and submissions both point at attachments. |
 | **Feedback** | A tutor's comment on a specific submission version. `author_type` reserves room for a future agent; v1 only ever writes tutor rows. |
 | **Topic** | An optional, tutor-applied tag on an assignment. The thing later analytics aggregate on. |
+| **Syllabus** | *(future — no code in v1)* An optional curriculum a class follows (e.g. "CIE IGCSE Mathematics 0580"). Tutor-owned; many classes may follow one syllabus. A class without one is fully functional. |
+| **Library** | *(future — no code in v1)* The tutor's own separate destination holding syllabus-scoped, reusable materials and, later, the question bank. A library material reaches students only by being attached to a session. |
 
 Never introduce synonyms. If a new concept is genuinely needed, add it to this table in the same commit.
 
 ## Domain rules
 
-- Every material, assignment and submission is reachable from **exactly one session**. There is no global file manager and no free-floating uploads.
+- Every material, assignment and submission is reachable from **exactly one session**. There is no global file manager and no free-floating uploads. *Decided 2026-07: the future Library relaxes this for tutors only — a library material is syllabus-scoped and tutor-visible. The student-facing half of the rule survives it: students only ever see a material through a session it was attached to.*
 - A class has exactly one tutor. Model students as a **collection** from day one, even though the v1 UI may assume 1:1. Retrofitting group classes later is expensive.
 - Assignments are issued in one session and usually reviewed in a **later** one. Model `issued_in_session_id` (required) and `review_session_id` (nullable).
 - Assignment due dates are independent of session dates. Do not derive one from the other.

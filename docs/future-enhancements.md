@@ -30,6 +30,27 @@ already supports, and what would need new tables.
     1. Homework assignments can be accessed from a single location within the student portal
     2. submitted assignments can be accessed from a single location within the tutor's page to review/mark
 
+### Decided direction — Jul 2026
+
+Settled while iterating on the UI mockups; these are decisions, not options.
+Vocabulary for the first two is reserved in CLAUDE.md's table.
+
+1. **Syllabus** is an optional attribute of a class (e.g. "CIE IGCSE
+   Mathematics 0580"). Tutor-owned, shared by many classes. A class without one
+   loses nothing.
+2. **Library is a separate top-level destination**, alongside classes — not a
+   panel inside a class. It holds syllabus-scoped, reusable materials plus the
+   question bank. A library material becomes student-visible only by being
+   attached to a session, which keeps the student-facing session-centric rule
+   intact (CLAUDE.md domain rules carry the matching note).
+3. **Each class gets a whiteboard** (tldraw/excalidraw). The board is saved at
+   the end of a lesson and viewable afterwards by the class's students — a
+   per-lesson artifact of an ongoing class surface.
+4. **Homework becomes question sets, not only files.** An agent drafts a set
+   from the syllabus question bank; **the tutor approves or swaps questions
+   before anything is issued**. Draft-then-approve is the contract — homework
+   never reaches a student untouched by the tutor.
+
 ---
 
 ## What the current schema already supports
@@ -54,7 +75,9 @@ assignments means asking a tutor to re-tag a term's work, which they won't do.
 
 | Direction above | What's missing |
 |---|---|
-| Class-level syllabus / knowledge base | No syllabus entity. Materials belong to a session by design, so a class-scoped document needs either a new table or a deliberate relaxation of the "everything hangs off a session" rule — the latter is a significant domain decision, not a small one |
+| Syllabus + Library | No `syllabuses` table, no `classes.syllabus_id`, and no way for a material to belong to a syllabus instead of a session. The domain decision this required has now been **made** (see "Decided direction"): library materials are tutor-only and syllabus-scoped; attaching one to a session is what publishes it to students. Likely shape: attachments stay as-is, materials gain a second, mutually exclusive parent |
+| Whiteboard per class, saved per lesson | Nothing stores board documents. Needs a board-state store (tldraw/excalidraw JSON — a new kind of attachment, not a file upload) plus a per-session saved snapshot; also the first new dependency this list actually forces |
+| Question bank + drafted homework sets | No `questions` table. Questions are syllabus-scoped and topic-tagged — the existing `topics` seam is the tagging half of this. An assignment needs to reference a set of questions, not only attached files; the draft-then-approve step needs a status on that set |
 | Tutor teaching approach, plans, goals | Nothing models tutor intent; today's schema records what happened, not what was planned |
 | Onboarding survey at class creation | No survey/response tables |
 | Time-to-exam behaviour | No exam date on a class |
