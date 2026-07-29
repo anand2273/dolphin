@@ -37,6 +37,53 @@ export function SessionDateTime({
   );
 }
 
+/**
+ * The mockup's left date block on lesson rows: weekday over day-of-month, in
+ * the viewer's timezone. Today/past variants derive from the instant, like
+ * SessionWhen — the server pass may disagree with the client near midnight,
+ * which suppressHydrationWarning absorbs; the value settles after hydration.
+ */
+export function DateChip({ at }: { at: Date | string }) {
+  const date = typeof at === "string" ? new Date(at) : at;
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  const isPast = !isToday && date.getTime() < now.getTime();
+
+  return (
+    <span
+      suppressHydrationWarning
+      aria-hidden
+      className={
+        "w-[46px] flex-none rounded-sm py-1 text-center leading-tight " +
+        (isToday
+          ? "bg-primary-tint"
+          : isPast
+            ? "border border-dashed border-border-strong"
+            : "bg-muted")
+      }
+    >
+      <span
+        suppressHydrationWarning
+        className={
+          "block text-[10px] font-semibold uppercase tracking-[0.08em] " +
+          (isToday ? "text-primary" : "text-faint")
+        }
+      >
+        {date.toLocaleDateString(undefined, { weekday: "short" })}
+      </span>
+      <span
+        suppressHydrationWarning
+        className={
+          "block font-display text-[17px] font-semibold tabular-nums " +
+          (isToday ? "text-primary" : "text-foreground")
+        }
+      >
+        {date.toLocaleDateString(undefined, { day: "numeric" })}
+      </span>
+    </span>
+  );
+}
+
 /** Past vs future is DERIVED from the instant — there is no status column. */
 export function SessionWhen({ at }: { at: Date | string }) {
   const date = typeof at === "string" ? new Date(at) : at;
