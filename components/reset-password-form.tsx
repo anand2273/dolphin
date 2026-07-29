@@ -5,6 +5,7 @@
 import { useActionState } from "react";
 import { resetPassword } from "@/app/(auth)/actions";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { FormState } from "@/lib/types";
@@ -30,6 +31,7 @@ export function ResetPasswordForm() {
       </div>
       {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
       <Button type="submit" className="w-full" disabled={pending}>
+        {pending && <Spinner />}
         {pending ? "Saving…" : "Set new password"}
       </Button>
       <p className="text-xs text-muted-foreground">

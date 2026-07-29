@@ -6,6 +6,7 @@ import { useState } from "react";
 import { updateSession, deleteSession } from "@/app/sessions/[sessionId]/actions";
 import { SessionForm } from "@/components/session-form";
 import { Button } from "@/components/ui/button";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import {
   Card,
   CardContent,
@@ -31,11 +32,14 @@ export function EditSessionPanel({
         <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
           Edit lesson
         </Button>
-        <form action={deleteSession.bind(null, sessionId)}>
-          <Button variant="ghost" size="sm" type="submit">
-            Delete
-          </Button>
-        </form>
+        <ConfirmButton
+          action={deleteSession.bind(null, sessionId)}
+          title="Delete this lesson?"
+          body="Its materials and any homework go with it."
+          confirmLabel="Delete"
+        >
+          Delete
+        </ConfirmButton>
       </div>
     );
   }

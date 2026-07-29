@@ -8,6 +8,7 @@ import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 import type { FormState } from "@/lib/types";
 
 /** An instant -> the `YYYY-MM-DDTHH:mm` the input expects, in viewer-local time. */
@@ -87,8 +88,15 @@ export function SessionForm({
       </div>
 
       {state.error && <p className="text-sm text-destructive">{state.error}</p>}
+      {/* Edits only. Editing revalidates in place and leaves the panel open, so
+          without this a successful save looks like nothing happened; a *created*
+          lesson announces itself by appearing in the list. */}
+      {state.ok && sessionId && (
+        <p className="text-sm text-muted-foreground">Saved.</p>
+      )}
 
       <Button type="submit" className="w-full" disabled={pending}>
+        {pending && <Spinner />}
         {pending ? pendingLabel : submitLabel}
       </Button>
     </form>

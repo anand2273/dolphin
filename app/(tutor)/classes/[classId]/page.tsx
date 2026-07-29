@@ -10,8 +10,11 @@ import { listSessionsForClass } from "@/lib/db/queries/sessions";
 import { InviteStudentForm } from "@/components/invite-student-form";
 import { CreateSessionForm } from "@/components/create-session-form";
 import { SessionDateTime, SessionWhen } from "@/components/session-datetime";
+import { Breadcrumbs } from "@/components/breadcrumbs";
+import { Notice } from "@/components/notice";
+import { resolveNotice } from "@/lib/notices";
 import { revokeInvitation } from "./actions";
-import { Button } from "@/components/ui/button";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import {
   Card,
   CardContent,
@@ -22,10 +25,14 @@ import {
 
 export default async function ClassPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ classId: string }>;
+  searchParams: Promise<{ notice?: string | string[] }>;
 }) {
   const { classId } = await params;
+  // Never rendered raw — resolveNotice maps a known key to our own copy.
+  const notice = resolveNotice((await searchParams).notice);
   const user = await requireAuthUser();
 
   let klass;
@@ -44,10 +51,15 @@ export default async function ClassPage({
 
   return (
     <main className="mx-auto max-w-3xl space-y-8 p-6">
+      {notice && <Notice message={notice} />}
+
       <div>
-        <Link href="/dashboard" className="text-sm text-muted-foreground underline">
-          ← Dashboard
-        </Link>
+        <Breadcrumbs
+          items={[
+            { label: "Dashboard", href: "/dashboard" },
+            { label: klass.name },
+          ]}
+        />
         <h1 className="mt-2 text-2xl font-semibold">{klass.name}</h1>
         {klass.subject && (
           <p className="text-sm text-muted-foreground">{klass.subject}</p>
@@ -125,11 +137,14 @@ export default async function ClassPage({
                         Invited {inv.createdAt.toLocaleDateString()}
                       </p>
                     </div>
-                    <form action={revokeInvitation.bind(null, inv.id)}>
-                      <Button variant="ghost" size="sm" type="submit">
-                        Revoke
-                      </Button>
-                    </form>
+                    <ConfirmButton
+                      action={revokeInvitation.bind(null, inv.id)}
+                      title="Revoke this invitation?"
+                      body="The emailed link stops working. You can invite them again afterwards."
+                      confirmLabel="Revoke"
+                    >
+                      Revoke
+                    </ConfirmButton>
                   </CardContent>
                 </Card>
               ))}

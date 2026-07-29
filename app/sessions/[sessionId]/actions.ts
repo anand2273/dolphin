@@ -269,5 +269,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
   });
 
   revalidatePath(`/classes/${owned.session.classId}`);
-  redirect(`/classes/${owned.session.classId}`);
+  // The notice key, not the message: the class page owns the copy, so a
+  // hand-crafted link can't put words in the app's mouth.
+  redirect(`/classes/${owned.session.classId}?notice=lesson-deleted`);
 }

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAuthUser } from "@/lib/auth/session";
 import { getSessionForViewer } from "@/lib/db/queries/sessions";
@@ -7,8 +6,10 @@ import { formatBytes } from "@/lib/storage/config";
 import { SessionDateTime, SessionWhen } from "@/components/session-datetime";
 import { EditSessionPanel } from "@/components/edit-session-panel";
 import { UploadMaterialForm } from "@/components/upload-material-form";
+import { Breadcrumbs } from "@/components/breadcrumbs";
 import { deleteMaterial } from "./actions";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 import {
   Card,
   CardContent,
@@ -46,12 +47,23 @@ export default async function SessionPage({
   return (
     <main className="mx-auto max-w-3xl space-y-8 p-6">
       <div>
-        <Link
-          href={isOwner ? `/classes/${klass.id}` : "/student"}
-          className="text-sm text-muted-foreground underline"
-        >
-          ← {klass.name}
-        </Link>
+        {/* A student has no class page of their own, so their class crumb is
+            context rather than a link. */}
+        <Breadcrumbs
+          items={
+            isOwner
+              ? [
+                  { label: "Dashboard", href: "/dashboard" },
+                  { label: klass.name, href: `/classes/${klass.id}` },
+                  { label: session.title ?? "Untitled lesson" },
+                ]
+              : [
+                  { label: "Your classes", href: "/student" },
+                  { label: klass.name },
+                  { label: session.title ?? "Untitled lesson" },
+                ]
+          }
+        />
         <div className="mt-2 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold">
@@ -112,11 +124,14 @@ export default async function SessionPage({
                     Download
                   </a>
                   {isOwner && (
-                    <form action={deleteMaterial.bind(null, m.materialId)}>
-                      <Button variant="ghost" size="sm" type="submit">
-                        Remove
-                      </Button>
-                    </form>
+                    <ConfirmButton
+                      action={deleteMaterial.bind(null, m.materialId)}
+                      title="Remove this material?"
+                      body="Students in this class will no longer see it."
+                      confirmLabel="Remove"
+                    >
+                      Remove
+                    </ConfirmButton>
                   )}
                 </div>
               </CardContent>

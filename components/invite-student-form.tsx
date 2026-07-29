@@ -5,6 +5,7 @@
 import { useActionState, useEffect, useRef } from "react";
 import { inviteStudent } from "@/app/(tutor)/classes/[classId]/actions";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { FormState } from "@/lib/types";
@@ -38,6 +39,7 @@ export function InviteStudentForm({ classId }: { classId: string }) {
         <p className="text-sm text-muted-foreground">Invitation sent.</p>
       )}
       <Button type="submit" disabled={pending}>
+        {pending && <Spinner />}
         {pending ? "Sending…" : "Send invite"}
       </Button>
     </form>

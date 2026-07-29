@@ -4,7 +4,7 @@
 with no code behind them yet — that is deliberate (see the forward-compat hooks
 in [`../CLAUDE.md`](../CLAUDE.md)), not an oversight.
 
-Last updated: password reset (post-CP5).
+Last updated: P1 UX fixes (post-CP5).
 
 ---
 
@@ -19,6 +19,7 @@ Last updated: password reset (post-CP5).
 | CP5 | Materials — private bucket, signed upload/download | Done |
 | — | Cloud deployment (Vercel + Supabase + Resend) | Done |
 | — | Password reset (forgot → email → set new) | Done |
+| — | UX P1 — confirmations, upload progress, breadcrumbs, spinners | Done |
 | CP6 | Assignments and submissions | **Not started** |
 | CP7+ | Everything in [`future-enhancements.md`](future-enhancements.md) | Not started |
 
@@ -126,6 +127,25 @@ Both roles, reusing the invite flow's plumbing: one origin end to end, a
   stock template uses `{{ .ConfirmationURL }}` and fails in the fragment.
 - `tests/authz.password-reset.test.ts` — 11 tests, mostly negative: no session,
   session without a marker, a marker belonging to someone else, and replay.
+
+## UX P1 — presentation only
+
+The four day-one problems in [`ux-roadmap.md`](ux-roadmap.md). No server action,
+authorization check or query changed; the 56 tests passed unaltered before and
+after.
+
+- `components/ui/confirm-button.tsx` — confirmation on the three destructive
+  actions (remove material, delete lesson, revoke invitation), on the platform's
+  `<dialog showModal()>`. No new dependency.
+- `components/upload-material-form.tsx` — `XMLHttpRequest` in place of `fetch`,
+  because only the former reports upload progress. Determinate bar plus cancel.
+- `components/breadcrumbs.tsx` — replaces the ad-hoc back links. Item #3 is only
+  *partially* closed: still no shell, and sign-out remains on two pages.
+- `lib/notices.ts` + `components/notice.tsx` — acknowledgement for the one action
+  that navigates you away (`deleteSession`). The `?notice=` param is a key mapped
+  through a fixed table, never rendered raw.
+- `components/ui/spinner.tsx` — in pending buttons and in a `loading.tsx` for
+  each of the four routes that read the database before first paint.
 
 ## Deployment
 
