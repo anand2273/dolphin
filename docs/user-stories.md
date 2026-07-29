@@ -116,6 +116,17 @@ from a person.*
 - My name appears on invitations and class pages
 - **Gap:** there is no UI to edit it after signup
 
+### US-T14 · Delete a class · Built · FR-2
+*As a tutor, I want to delete a class I no longer teach, so my dashboard shows
+only current work.*
+
+- A "Danger zone" on the class page asks me to type `delete <class name>`
+  before the delete button arms; the server re-checks the phrase
+- Deletion is a soft delete: the class disappears for me and my students, and
+  its lessons, materials and student work become unreachable
+- A pending invite link for the class stops working (lands on `/link-expired`)
+- I land back on my dashboard with a "Class deleted." acknowledgement
+
 ---
 
 ## Student — invited, low-privilege
@@ -191,7 +202,7 @@ account from my email, without asking anyone.*
 | Story | Requirement | Status |
 |---|---|---|
 | US-T1, US-S1, US-A1 | FR-1 Accounts and roles | Built |
-| US-T2, US-T5 | FR-2 Classes | Built |
+| US-T2, US-T5, US-T14 | FR-2 Classes | Built |
 | US-T3, US-T4, US-S1, US-S2 | FR-3 Invitations | Built |
 | US-T6, US-T7, US-S3 | FR-4 Sessions | Built |
 | US-T8, US-S4 | FR-5 Materials | Built |

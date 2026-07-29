@@ -20,10 +20,11 @@ Last updated: P1 UX fixes (post-CP5).
 | — | Cloud deployment (Vercel + Supabase + Resend) | Done |
 | — | Password reset (forgot → email → set new) | Done |
 | — | UX P1 — confirmations, upload progress, breadcrumbs, spinners | Done |
+| — | Class deletion (type-to-confirm soft delete) | Done |
 | CP6 | Assignments and submissions | **Not started** |
 | CP7+ | Everything in [`future-enhancements.md`](future-enhancements.md) | Not started |
 
-**56 tests, all passing.** Every one is an authorization test; the suite is
+**62 tests, all passing.** Every one is an authorization test; the suite is
 deliberately weighted toward negative cases.
 
 ---
@@ -131,8 +132,8 @@ Both roles, reusing the invite flow's plumbing: one origin end to end, a
 ## UX P1 — presentation only
 
 The four day-one problems in [`ux-roadmap.md`](ux-roadmap.md). No server action,
-authorization check or query changed; the 56 tests passed unaltered before and
-after.
+authorization check or query changed; the existing tests passed unaltered before
+and after.
 
 - `components/ui/confirm-button.tsx` — confirmation on the three destructive
   actions (remove material, delete lesson, revoke invitation), on the platform's
@@ -146,6 +147,27 @@ after.
   through a fixed table, never rendered raw.
 - `components/ui/spinner.tsx` — in pending buttons and in a `loading.tsx` for
   each of the four routes that read the database before first paint.
+
+## Class deletion · US-T14 · FR-2.4
+
+Soft delete behind a type-to-confirm dialog (`delete <class name>`) — the first
+mutation with a typed-phrase gate. Catches the implementation up to row 8 of the
+authz matrix, which promised tutor-only class soft-delete from day one.
+
+- `app/(tutor)/classes/[classId]/actions.ts` — `deleteClass`: parse → owner
+  check → server-side phrase re-check (the disabled button is UX, not a guard)
+  → soft delete + `class.deleted` event in one transaction → redirect to
+  `/dashboard?notice=class-deleted`.
+- No child row is touched: every read of sessions/materials resolves class
+  access first, and `resolveClassAccess` filters `deleted_at`, so everything
+  inside the class becomes unreachable with it.
+- `getInvitationByToken` now also requires a live class, so a pending invite
+  link for a deleted class lands on `/link-expired`.
+- `components/ui/type-to-confirm-button.tsx` — sibling of `ConfirmButton`
+  (which has no form fields and no error surface); still the platform's
+  `<dialog>`, no new dependency.
+- `tests/authz.class.test.ts` — six new tests: owner, enrolled student and the
+  pending invite token all lose access after the soft delete.
 
 ## Deployment
 

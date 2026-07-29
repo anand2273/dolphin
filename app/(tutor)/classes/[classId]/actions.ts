@@ -1,9 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { invitations, profiles, sessions } from "@/lib/db/schema";
+import { classes, invitations, profiles, sessions } from "@/lib/db/schema";
 import { requireAuthUser } from "@/lib/auth/session";
 import { assertClassOwner, AuthzError } from "@/lib/auth/authz";
 import { findAccountByEmail } from "@/lib/auth/account-lookup";
@@ -12,6 +13,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "@/lib/auth/supabase-admin";
 import { recordEvent } from "@/lib/db/events";
 import { generateInviteToken } from "@/lib/tokens";
+import { deleteClassSchema } from "@/lib/validation/class";
 import { inviteStudentSchema } from "@/lib/validation/invite";
 import { createSessionSchema } from "@/lib/validation/session";
 import type { FormState } from "@/lib/types";
@@ -190,6 +192,59 @@ export async function createSession(
   // 4. revalidate
   revalidatePath(`/classes/${classId}`);
   return { ok: true };
+}
+
+/** Soft-delete a class. Owner-only, gated by a typed confirmation phrase. */
+export async function deleteClass(
+  classId: string,
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  // 1. parse
+  const parsed = deleteClassSchema.safeParse({ confirm: formData.get("confirm") });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+  }
+
+  // 2. authorize — only the class owner may delete it.
+  const user = await requireAuthUser();
+  let klass;
+  try {
+    klass = await assertClassOwner(user.id, classId);
+  } catch (e) {
+    if (e instanceof AuthzError) return { error: "Not authorized" };
+    throw e;
+  }
+
+  // The disabled submit button in the dialog is UX, not a guard — re-check the
+  // phrase here so a hand-rolled request gets the same friction.
+  if (parsed.data.confirm !== `delete ${klass.name}`) {
+    return { error: `Type "delete ${klass.name}" exactly to confirm.` };
+  }
+
+  // 3. mutate — soft delete + event, atomically. Child rows (sessions,
+  // materials, enrollments…) keep their own deleted_at: every read of them
+  // resolves class access first, so they become unreachable with the class.
+  await db.transaction(async (tx) => {
+    await tx
+      .update(classes)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(classes.id, classId), isNull(classes.deletedAt)));
+
+    await recordEvent(
+      {
+        actorId: user.id,
+        verb: "class.deleted",
+        subjectType: "class",
+        subjectId: classId,
+      },
+      tx,
+    );
+  });
+
+  // 4. revalidate
+  revalidatePath("/dashboard");
+  redirect("/dashboard?notice=class-deleted");
 }
 
 /** Revoke a pending invitation. Owner-only. */

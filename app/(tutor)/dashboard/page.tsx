@@ -3,6 +3,8 @@ import { requireTutor } from "@/lib/auth/guards";
 import { listClassesForTutor } from "@/lib/db/queries/classes";
 import { signOut } from "@/app/(auth)/actions";
 import { CreateClassForm } from "@/components/create-class-form";
+import { Notice } from "@/components/notice";
+import { resolveNotice } from "@/lib/notices";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -12,12 +14,20 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ notice?: string | string[] }>;
+}) {
+  // Never rendered raw — resolveNotice maps a known key to our own copy.
+  const notice = resolveNotice((await searchParams).notice);
   const { user, profile } = await requireTutor();
   const classes = await listClassesForTutor(user.id);
 
   return (
     <main className="mx-auto max-w-3xl space-y-8 p-6">
+      {notice && <Notice message={notice} />}
+
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Your classes</h1>

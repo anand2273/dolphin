@@ -42,6 +42,10 @@ task appears to need one, stop and ask rather than building a partial version.
    from day one even while the UI assumes 1:1.
 3. A tutor sees only their own classes. Another tutor's class is indistinguishable
    from a non-existent one.
+4. A tutor may soft-delete a class, gated by typing `delete <class name>` (the
+   server re-checks the phrase). Afterwards the class and everything reachable
+   through it — lessons, materials, enrollments — is inaccessible to every role,
+   and pending invite links stop working.
 
 ### FR-3 — Invitations and enrollment · Built
 

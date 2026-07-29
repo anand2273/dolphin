@@ -13,8 +13,9 @@ import { SessionDateTime, SessionWhen } from "@/components/session-datetime";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { Notice } from "@/components/notice";
 import { resolveNotice } from "@/lib/notices";
-import { revokeInvitation } from "./actions";
+import { deleteClass, revokeInvitation } from "./actions";
 import { ConfirmButton } from "@/components/ui/confirm-button";
+import { TypeToConfirmButton } from "@/components/ui/type-to-confirm-button";
 import {
   Card,
   CardContent,
@@ -174,6 +175,26 @@ export default async function ClassPage({
             </CardHeader>
             <CardContent>
               <InviteStudentForm classId={classId} />
+            </CardContent>
+          </Card>
+
+          <Card className="h-fit border-destructive/50">
+            <CardHeader>
+              <CardTitle className="text-base">Danger zone</CardTitle>
+              <CardDescription>
+                Deleting this class removes it for you and your students.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <TypeToConfirmButton
+                action={deleteClass.bind(null, classId)}
+                confirmPhrase={`delete ${klass.name}`}
+                title="Delete this class?"
+                body={`Lessons, materials and student work in "${klass.name}" will no longer be accessible, and pending invite links stop working.`}
+                confirmLabel="Delete class"
+              >
+                Delete class
+              </TypeToConfirmButton>
             </CardContent>
           </Card>
         </div>

@@ -15,7 +15,15 @@ export async function getInvitationByToken(rawToken: string) {
     .from(invitations)
     .innerJoin(classes, eq(classes.id, invitations.classId))
     .innerJoin(profiles, eq(profiles.id, classes.tutorId))
-    .where(and(eq(invitations.tokenHash, hashToken(rawToken)), isNull(invitations.deletedAt)))
+    .where(
+      and(
+        eq(invitations.tokenHash, hashToken(rawToken)),
+        isNull(invitations.deletedAt),
+        // A deleted class takes its pending invite links with it — the token
+        // falls into the same not-found path as an expired one.
+        isNull(classes.deletedAt),
+      ),
+    )
     .limit(1);
   return row ?? null;
 }

@@ -15,3 +15,8 @@ export const createClassSchema = z.object({
 });
 
 export type CreateClassInput = z.infer<typeof createClassSchema>;
+
+// The phrase itself is checked in the action — it needs the class row's name.
+export const deleteClassSchema = z.object({
+  confirm: z.string().trim().min(1, "Type the confirmation phrase"),
+});
