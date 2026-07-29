@@ -98,12 +98,10 @@ read-only queries (`listUpcomingSessionsForTutor`, `listClassOverviewsForTutor`)
 that keep the authorize-first pattern. Sidebar-pointing empty-state copy died
 with the sidebars.
 
-### 9. No branded error pages
-404s fall through to Next's default. Given the app deliberately returns 404 for
-*unauthorized* access, a stranger following a shared link sees a stock error with
-no explanation.
-
-- `not-found.tsx` and `error.tsx`, in the app's own voice
+### 9. No branded error pages — **done**
+`app/not-found.tsx` and `app/error.tsx`, in the app's own voice. The 404 copy
+deliberately covers both a missing page and unauthorized access without saying
+which, because notFound() is the app's answer to both.
 
 ### 10. Materials give no type affordance — **mostly done**
 Material rows carry `components/ui/ext-chip.tsx`: the extension block from the

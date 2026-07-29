@@ -4,7 +4,7 @@
 with no code behind them yet — that is deliberate (see the forward-compat hooks
 in [`../CLAUDE.md`](../CLAUDE.md)), not an oversight.
 
-Last updated: P1 UX fixes (post-CP5).
+Last updated: UI overhaul (post-CP5).
 
 ---
 
@@ -21,6 +21,7 @@ Last updated: P1 UX fixes (post-CP5).
 | — | Password reset (forgot → email → set new) | Done |
 | — | UX P1 — confirmations, upload progress, breadcrumbs, spinners | Done |
 | — | Class deletion (type-to-confirm soft delete) | Done |
+| — | UI overhaul — shell, mockup design language, dark mode | Done |
 | CP6 | Assignments and submissions | **Not started** |
 | CP7+ | Everything in [`future-enhancements.md`](future-enhancements.md) | Not started |
 
@@ -168,6 +169,23 @@ authz matrix, which promised tutor-only class soft-delete from day one.
   `<dialog>`, no new dependency.
 - `tests/authz.class.test.ts` — six new tests: owner, enrolled student and the
   pending invite token all lose access after the soft delete.
+
+## UI overhaul — presentation only
+
+The approved UI-direction mockup applied to the real app: paper/sea design
+tokens (light **and** dark via `prefers-color-scheme`), a persistent top-bar
+shell rendered by route-group layouts (sign-out finally reachable everywhere),
+panel/row lists with date chips in place of stacked cards, the dashboard's
+"Up next" feed + class cards + guided first-run, an upcoming/past lesson split
+on the class page, file-type chips on materials, and branded 404/error pages.
+Sidebar forms moved into native-`<dialog>` FormDialogs.
+
+No server action, authorization check or schema changed; the 62 tests passed
+unaltered. The only server-side additions are two read-only queries
+(`listUpcomingSessionsForTutor`, `listClassOverviewsForTutor`), both keyed to
+the owning tutor before any row is read. Everything future-facing in the mockup
+(Library, whiteboard, homework question sets, syllabus pills) was deliberately
+left out — see the scope rules in CLAUDE.md.
 
 ## Deployment
 

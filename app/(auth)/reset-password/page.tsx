@@ -2,21 +2,13 @@ import Link from "next/link";
 import { getAuthUser } from "@/lib/auth/session";
 import { hasRecoverySession } from "@/lib/auth/recovery";
 import { ResetPasswordForm } from "@/components/reset-password-form";
+import { AuthShell } from "@/components/auth-card";
 import {
-  Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="flex min-h-screen items-center justify-center p-4">
-      <Card className="w-full max-w-sm">{children}</Card>
-    </main>
-  );
-}
 
 /**
  * Where /auth/confirm lands a `type=recovery` link.
@@ -34,7 +26,7 @@ export default async function ResetPasswordPage() {
     // Never a login form: the whole reason to be here is not knowing the
     // password. The way forward is a fresh link, not a sign-in attempt.
     return (
-      <Shell>
+      <AuthShell>
         <CardHeader>
           <CardTitle className="text-lg">Open this from your reset email</CardTitle>
           <CardDescription>
@@ -50,12 +42,12 @@ export default async function ResetPasswordPage() {
             </Link>
           </p>
         </CardContent>
-      </Shell>
+      </AuthShell>
     );
   }
 
   return (
-    <Shell>
+    <AuthShell>
       <CardHeader>
         <CardTitle className="text-lg">Choose a new password</CardTitle>
         <CardDescription>Setting a new password for {user.email}.</CardDescription>
@@ -63,6 +55,6 @@ export default async function ResetPasswordPage() {
       <CardContent>
         <ResetPasswordForm />
       </CardContent>
-    </Shell>
+    </AuthShell>
   );
 }

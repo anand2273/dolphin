@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { signOut } from "@/app/(auth)/actions";
+import { Brand } from "@/components/brand";
 
 /**
  * The persistent shell header. Rendered by the signed-in route-group layouts —
@@ -20,29 +21,8 @@ export function TopBar({
   return (
     <header className="sticky top-0 z-20 border-b bg-background">
       <div className="mx-auto flex h-[54px] w-full max-w-[960px] items-center gap-5 px-4 sm:px-6">
-        <Link
-          href={homeHref}
-          aria-label="Dolphn home"
-          className="flex items-center gap-2 font-display text-base font-semibold tracking-tight"
-        >
-          <span
-            aria-hidden
-            className="grid size-6 flex-none place-items-center rounded-[7px] bg-primary text-primary-foreground"
-          >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.6"
-              strokeLinecap="round"
-            >
-              <path d="M4 15 Q12 4 20 15" />
-              <path d="M9 15 Q12 11 15 15" />
-            </svg>
-          </span>
-          Dolphn
+        <Link href={homeHref} aria-label="Dolphn home">
+          <Brand />
         </Link>
         <nav aria-label="Primary" className="ml-2 hidden sm:flex">
           <Link

@@ -6,21 +6,13 @@ import {
   inviteRejectionMessage,
 } from "@/lib/auth/invite-access";
 import { AcceptInviteForm } from "@/components/accept-invite-form";
+import { AuthShell } from "@/components/auth-card";
 import {
-  Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="flex min-h-screen items-center justify-center p-4">
-      <Card className="w-full max-w-sm">{children}</Card>
-    </main>
-  );
-}
 
 export default async function AcceptInvitePage({
   params,
@@ -36,7 +28,7 @@ export default async function AcceptInvitePage({
     // bounce to /login: a brand-new invitee has no password, so the login form
     // is a dead end and they end up unable to use their own email address.
     return (
-      <Shell>
+      <AuthShell>
         <CardHeader>
           <CardTitle className="text-lg">Open this from your invitation email</CardTitle>
           <CardDescription>
@@ -54,7 +46,7 @@ export default async function AcceptInvitePage({
             — pending invitations are waiting on your dashboard.
           </p>
         </CardContent>
-      </Shell>
+      </AuthShell>
     );
   }
 
@@ -72,12 +64,12 @@ export default async function AcceptInvitePage({
 
   if (!verdict.ok) {
     return (
-      <Shell>
+      <AuthShell>
         <CardHeader>
           <CardTitle className="text-lg">Can&apos;t accept this invite</CardTitle>
           <CardDescription>{inviteRejectionMessage(verdict.reason)}</CardDescription>
         </CardHeader>
-      </Shell>
+      </AuthShell>
     );
   }
 
@@ -86,7 +78,7 @@ export default async function AcceptInvitePage({
   // A tutor account cannot join a class as a student (strict separation).
   if (profile?.role === "tutor") {
     return (
-      <Shell>
+      <AuthShell>
         <CardHeader>
           <CardTitle className="text-lg">Signed in as a tutor</CardTitle>
           <CardDescription>
@@ -94,7 +86,7 @@ export default async function AcceptInvitePage({
             student.
           </CardDescription>
         </CardHeader>
-      </Shell>
+      </AuthShell>
     );
   }
 
@@ -102,7 +94,7 @@ export default async function AcceptInvitePage({
   const mode = profile ? "join" : "create";
 
   return (
-    <Shell>
+    <AuthShell>
       <CardHeader>
         <CardTitle className="text-lg">Join {row!.className}</CardTitle>
         <CardDescription>
@@ -114,6 +106,6 @@ export default async function AcceptInvitePage({
       <CardContent>
         <AcceptInviteForm token={token} mode={mode} />
       </CardContent>
-    </Shell>
+    </AuthShell>
   );
 }

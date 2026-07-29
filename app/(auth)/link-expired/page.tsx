@@ -1,6 +1,6 @@
 import Link from "next/link";
+import { AuthShell } from "@/components/auth-card";
 import {
-  Card,
   CardContent,
   CardDescription,
   CardHeader,
@@ -36,9 +36,8 @@ export default async function LinkExpiredPage({
   }[kind];
 
   return (
-    <main className="flex min-h-screen items-center justify-center p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
+    <AuthShell>
+      <CardHeader>
           <CardTitle className="text-lg">This link has already been used</CardTitle>
           <CardDescription>{description}</CardDescription>
         </CardHeader>
@@ -61,7 +60,6 @@ export default async function LinkExpiredPage({
             </p>
           )}
         </CardContent>
-      </Card>
-    </main>
+    </AuthShell>
   );
 }

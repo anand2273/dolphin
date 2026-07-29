@@ -1,6 +1,6 @@
 import { ForgotPasswordForm } from "@/components/forgot-password-form";
+import { AuthShell } from "@/components/auth-card";
 import {
-  Card,
   CardContent,
   CardDescription,
   CardHeader,
@@ -16,19 +16,17 @@ import {
  */
 export default async function ForgotPasswordPage() {
   return (
-    <main className="flex min-h-screen items-center justify-center p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle className="text-xl">Reset your password</CardTitle>
-          <CardDescription>
-            Enter the email you sign in with and we&apos;ll send you a link to set
-            a new password.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ForgotPasswordForm />
-        </CardContent>
-      </Card>
-    </main>
+    <AuthShell>
+      <CardHeader>
+        <CardTitle className="text-xl">Reset your password</CardTitle>
+        <CardDescription>
+          Enter the email you sign in with and we&apos;ll send you a link to set
+          a new password.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ForgotPasswordForm />
+      </CardContent>
+    </AuthShell>
   );
 }
