@@ -6,8 +6,8 @@ import {
   listEnrolledClasses,
   listPendingInvitesForEmail,
 } from "@/lib/db/queries/invitations";
-import { signOut } from "@/app/(auth)/actions";
 import { acceptPendingInvite } from "@/app/invite/accept/actions";
+import { Page, PageHeader } from "@/components/page";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/card";
 
 export default async function StudentHome() {
-  const { user, profile } = await requireStudent();
+  const { user } = await requireStudent();
 
   const [classes, pendingInvites] = await Promise.all([
     listEnrolledClasses(user.id),
@@ -37,20 +37,8 @@ export default async function StudentHome() {
   );
 
   return (
-    <main className="mx-auto max-w-xl space-y-6 p-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Your classes</h1>
-          <p className="text-sm text-muted-foreground">
-            {profile?.fullName ?? user.email}
-          </p>
-        </div>
-        <form action={signOut}>
-          <Button variant="outline" size="sm" type="submit">
-            Sign out
-          </Button>
-        </form>
-      </header>
+    <Page>
+      <PageHeader title="Your classes" />
 
       {pendingInvites.length > 0 && (
         <section className="space-y-3">
@@ -124,6 +112,6 @@ export default async function StudentHome() {
           ))}
         </div>
       )}
-    </main>
+    </Page>
   );
 }

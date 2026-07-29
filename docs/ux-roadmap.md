@@ -39,14 +39,14 @@ abandoned upload, since step 1 writes nothing.
 - Still open: nothing reclaims those orphan objects (see #4 in Known gaps,
   `docs/status.md`).
 
-### 3. No application shell — **partially done**
-Breadcrumbs landed (`components/breadcrumbs.tsx`), replacing the ad-hoc
-"← Dashboard" / "← {class}" links on the class and lesson pages. A student's
-class crumb is deliberately unlinked — they have no class route (see #7).
-
-- Still open: **the shell itself.** There is no persistent header and sign-out
-  still exists only on `/dashboard` and `/student`, so a tutor on a lesson page
-  has no way to sign out.
+### 3. No application shell — **done**
+Breadcrumbs landed first (`components/breadcrumbs.tsx`); the shell followed.
+`components/top-bar.tsx` is a persistent sticky header rendered by the three
+signed-in route-group layouts (`(tutor)`, `(student)`, `sessions/`) — brand,
+role-resolved "Classes" home link, sign-out and an avatar initial. Sign-out
+lives only there now; every signed-in page can reach it. The `(auth)` pages and
+`invite/accept` stay shell-less on purpose — they're signed out. Pages share
+one container (`components/page.tsx`) so content aligns under the bar.
 
 ### 4. Actions succeed silently — **done, narrowly**
 Deliberately not a toast system. Acknowledgement was added only where the UI does

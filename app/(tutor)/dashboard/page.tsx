@@ -1,11 +1,10 @@
 import Link from "next/link";
 import { requireTutor } from "@/lib/auth/guards";
 import { listClassesForTutor } from "@/lib/db/queries/classes";
-import { signOut } from "@/app/(auth)/actions";
 import { CreateClassForm } from "@/components/create-class-form";
 import { Notice } from "@/components/notice";
 import { resolveNotice } from "@/lib/notices";
-import { Button } from "@/components/ui/button";
+import { Page, PageHeader } from "@/components/page";
 import {
   Card,
   CardContent,
@@ -21,26 +20,14 @@ export default async function DashboardPage({
 }) {
   // Never rendered raw — resolveNotice maps a known key to our own copy.
   const notice = resolveNotice((await searchParams).notice);
-  const { user, profile } = await requireTutor();
+  const { user } = await requireTutor();
   const classes = await listClassesForTutor(user.id);
 
   return (
-    <main className="mx-auto max-w-3xl space-y-8 p-6">
+    <Page>
       {notice && <Notice message={notice} />}
 
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Your classes</h1>
-          <p className="text-sm text-muted-foreground">
-            Signed in as {profile.fullName ?? user.email}
-          </p>
-        </div>
-        <form action={signOut}>
-          <Button variant="outline" size="sm" type="submit">
-            Sign out
-          </Button>
-        </form>
-      </header>
+      <PageHeader title="Your classes" />
 
       <section className="grid gap-6 md:grid-cols-[1fr_320px]">
         <div className="space-y-3">
@@ -79,6 +66,6 @@ export default async function DashboardPage({
           </CardContent>
         </Card>
       </section>
-    </main>
+    </Page>
   );
 }

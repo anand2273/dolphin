@@ -7,6 +7,7 @@ import { SessionDateTime, SessionWhen } from "@/components/session-datetime";
 import { EditSessionPanel } from "@/components/edit-session-panel";
 import { UploadMaterialForm } from "@/components/upload-material-form";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { Page } from "@/components/page";
 import { deleteMaterial } from "./actions";
 import { buttonVariants } from "@/components/ui/button";
 import { ConfirmButton } from "@/components/ui/confirm-button";
@@ -45,7 +46,7 @@ export default async function SessionPage({
   const sessionMaterials = await listMaterialsForSession(user.id, session.id);
 
   return (
-    <main className="mx-auto max-w-3xl space-y-8 p-6">
+    <Page>
       <div>
         {/* A student has no class page of their own, so their class crumb is
             context rather than a link. */}
@@ -173,6 +174,6 @@ export default async function SessionPage({
           </CardHeader>
         </Card>
       )}
-    </main>
+    </Page>
   );
 }

@@ -12,6 +12,7 @@ import { CreateSessionForm } from "@/components/create-session-form";
 import { SessionDateTime, SessionWhen } from "@/components/session-datetime";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { Notice } from "@/components/notice";
+import { Page } from "@/components/page";
 import { resolveNotice } from "@/lib/notices";
 import { deleteClass, revokeInvitation } from "./actions";
 import { ConfirmButton } from "@/components/ui/confirm-button";
@@ -51,7 +52,7 @@ export default async function ClassPage({
   ]);
 
   return (
-    <main className="mx-auto max-w-3xl space-y-8 p-6">
+    <Page>
       {notice && <Notice message={notice} />}
 
       <div>
@@ -199,6 +200,6 @@ export default async function ClassPage({
           </Card>
         </div>
       </section>
-    </main>
+    </Page>
   );
 }
