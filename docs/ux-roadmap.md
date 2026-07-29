@@ -123,8 +123,11 @@ Layouts use `max-w-*` and `md:` breakpoints but have not been tested on a real
 handset. Tutors will absolutely use this on a phone between lessons — the
 class page's two-column grid is the first thing to check.
 
-### 13. No dark mode
-Tailwind and the shadcn tokens are set up for it; nothing implements it.
+### 13. No dark mode — **done**
+The token layer now carries the full dark palette from the UI-direction mockup,
+switched by `prefers-color-scheme` alone — no toggle, no dependency. One
+deliberate deviation: dark `--primary-foreground` is dark ink rather than the
+mockup's near-white, which failed contrast on the light sea-green.
 
 ### 14. Upload ergonomics
 - No drag-and-drop

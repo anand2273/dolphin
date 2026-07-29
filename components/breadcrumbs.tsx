@@ -14,13 +14,16 @@ export type Crumb = {
 export function Breadcrumbs({ items }: { items: Crumb[] }) {
   return (
     <nav aria-label="Breadcrumb">
-      <ol className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+      <ol className="flex flex-wrap items-center gap-2 text-[13px] text-faint">
         {items.map((item, i) => {
           const isLast = i === items.length - 1;
           return (
-            <li key={`${item.label}-${i}`} className="flex items-center gap-1.5">
+            <li key={`${item.label}-${i}`} className="flex items-center gap-2">
               {item.href && !isLast ? (
-                <Link href={item.href} className="hover:text-foreground hover:underline">
+                <Link
+                  href={item.href}
+                  className="text-muted-foreground hover:text-primary hover:underline"
+                >
                   {item.label}
                 </Link>
               ) : (
@@ -32,7 +35,7 @@ export function Breadcrumbs({ items }: { items: Crumb[] }) {
                 </span>
               )}
               {!isLast && (
-                <span aria-hidden className="text-border">
+                <span aria-hidden className="text-border-strong">
                   /
                 </span>
               )}

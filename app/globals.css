@@ -2,38 +2,58 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Palette from the approved UI-direction mockup: warm paper ground, deep
+   sea-green accent, amber reserved for homework-due (unused until CP6). */
 :root {
-  --background: 0 0% 100%;
-  --foreground: 222 47% 11%;
-  --card: 0 0% 100%;
-  --card-foreground: 222 47% 11%;
-  --primary: 222 47% 31%;
-  --primary-foreground: 210 40% 98%;
-  --muted: 210 40% 96%;
-  --muted-foreground: 215 16% 47%;
-  --destructive: 0 72% 51%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 214 32% 91%;
-  --input: 214 32% 91%;
-  --ring: 222 47% 31%;
-  --radius: 0.6rem;
+  --background: 50 23% 95%; /* paper */
+  --foreground: 205 26% 18%; /* ink */
+  --card: 0 0% 100%; /* surface */
+  --card-foreground: 205 26% 18%;
+  --primary: 170 67% 24%; /* sea */
+  --primary-foreground: 50 23% 95%;
+  --primary-deep: 171 70% 18%; /* hover */
+  --primary-tint: 153 24% 91%;
+  --muted: 51 18% 92%; /* surface-2 */
+  --muted-foreground: 198 11% 40%; /* ink-soft */
+  --faint: 201 10% 59%; /* ink-faint */
+  --amber: 35 84% 36%;
+  --amber-tint: 38 58% 92%;
+  --destructive: 4 56% 45%; /* red */
+  --destructive-foreground: 50 23% 95%;
+  --destructive-tint: 7 52% 94%;
+  --border: 53 13% 87%; /* line */
+  --border-strong: 55 10% 79%;
+  --input: 55 10% 79%;
+  --ring: 170 67% 24%;
+  --radius: 0.625rem;
+  --shadow-card: 0 1px 2px rgb(34 48 58 / 0.06), 0 4px 16px rgb(34 48 58 / 0.05);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: 222 47% 8%;
-    --foreground: 210 40% 98%;
-    --card: 222 47% 11%;
-    --card-foreground: 210 40% 98%;
-    --primary: 210 40% 90%;
-    --primary-foreground: 222 47% 11%;
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
-    --destructive: 0 63% 45%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217 33% 20%;
-    --input: 217 33% 22%;
-    --ring: 213 27% 70%;
+    --background: 196 26% 8%;
+    --foreground: 156 10% 90%;
+    --card: 197 23% 12%;
+    --card-foreground: 156 10% 90%;
+    --primary: 167 38% 47%;
+    /* Deliberate deviation from the mockup, which keeps near-white text on the
+       light sea-green — that fails contrast. Dark ink instead. */
+    --primary-foreground: 196 26% 8%;
+    --primary-deep: 167 39% 59%;
+    --primary-tint: 171 37% 14%;
+    --muted: 198 22% 15%;
+    --muted-foreground: 176 9% 64%;
+    --faint: 183 8% 47%;
+    --amber: 35 65% 56%;
+    --amber-tint: 37 33% 14%;
+    --destructive: 6 61% 62%;
+    --destructive-foreground: 196 26% 8%;
+    --destructive-tint: 4 30% 17%;
+    --border: 197 19% 18%;
+    --border-strong: 198 18% 25%;
+    --input: 198 18% 25%;
+    --ring: 167 38% 47%;
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.35), 0 4px 16px rgb(0 0 0 / 0.25);
   }
 }
 
@@ -45,4 +65,19 @@ body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
   font-feature-settings: "rlig" 1, "calt" 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Buttons carry their own focus ring via the cva base; links and disclosure
+   summaries have nothing, so they get the outline here. */
+a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
 }
