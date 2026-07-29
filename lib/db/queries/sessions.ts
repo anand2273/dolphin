@@ -1,7 +1,7 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, gte, isNull } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { sessions } from "@/lib/db/schema";
+import { classes, sessions } from "@/lib/db/schema";
 import {
   resolveClassAccess,
   type Class,
@@ -30,6 +30,31 @@ export async function listSessionsForClass(
     .from(sessions)
     .where(and(eq(sessions.classId, classId), isNull(sessions.deletedAt)))
     .orderBy(asc(sessions.scheduledAt));
+}
+
+/**
+ * The dashboard's "Up next" feed: the soonest upcoming lessons across every
+ * live class this tutor owns. Ownership is the WHERE clause — same trust model
+ * as listClassesForTutor, so nothing another tutor owns can appear.
+ */
+export async function listUpcomingSessionsForTutor(
+  userId: string,
+  limit = 5,
+): Promise<Array<{ session: Session; className: string }>> {
+  return db
+    .select({ session: sessions, className: classes.name })
+    .from(sessions)
+    .innerJoin(classes, eq(classes.id, sessions.classId))
+    .where(
+      and(
+        eq(classes.tutorId, userId),
+        isNull(classes.deletedAt),
+        isNull(sessions.deletedAt),
+        gte(sessions.scheduledAt, new Date()),
+      ),
+    )
+    .orderBy(asc(sessions.scheduledAt))
+    .limit(limit);
 }
 
 export type SessionForViewer = {

@@ -89,12 +89,14 @@ Every class renders all its lessons inline. Fine for one class, unusable at five
 
 - Give students a class page of their own, mirroring the tutor's
 
-### 8. Empty states don't teach
-"No lessons yet. Add the first one on the right." is accurate and unhelpful to
-someone who has never used the app. A new tutor lands on an empty dashboard with
-no sense of the class → lesson → material → homework progression.
-
-- First-run guidance on the dashboard that names the next action
+### 8. Empty states don't teach — **done**
+A tutor with no classes now lands on `components/first-run.tsx`: the four-step
+class → lesson → material → homework path with a create-class call to action.
+The dashboard also gained the mockup's "Up next" cross-class lesson feed and
+class cards (facepile, pending-invite pill, next-lesson line), fed by two new
+read-only queries (`listUpcomingSessionsForTutor`, `listClassOverviewsForTutor`)
+that keep the authorize-first pattern. Sidebar-pointing empty-state copy died
+with the sidebars.
 
 ### 9. No branded error pages
 404s fall through to Next's default. Given the app deliberately returns 404 for
