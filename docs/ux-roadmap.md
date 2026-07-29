@@ -105,11 +105,12 @@ no explanation.
 
 - `not-found.tsx` and `error.tsx`, in the app's own voice
 
-### 10. Materials give no type affordance
-Every material renders identically regardless of type — no icon, no thumbnail, no
-distinction between a worksheet PDF and a photo of a whiteboard.
+### 10. Materials give no type affordance — **mostly done**
+Material rows carry `components/ui/ext-chip.tsx`: the extension block from the
+mockup (PDF red, images sea-green, everything else neutral), derived from the
+stored filename with the recorded MIME as fallback.
 
-- File-type icons at minimum; image thumbnails would be better
+- Still open: image thumbnails.
 
 ---
 

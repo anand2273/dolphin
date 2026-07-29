@@ -3,21 +3,25 @@ import { requireAuthUser } from "@/lib/auth/session";
 import { getSessionForViewer } from "@/lib/db/queries/sessions";
 import { listMaterialsForSession } from "@/lib/db/queries/materials";
 import { formatBytes } from "@/lib/storage/config";
-import { SessionDateTime, SessionWhen } from "@/components/session-datetime";
+import { SessionDateTime } from "@/components/session-datetime";
 import { EditSessionPanel } from "@/components/edit-session-panel";
-import { UploadMaterialForm } from "@/components/upload-material-form";
+import { AddMaterialRow } from "@/components/add-material-row";
 import { Breadcrumbs } from "@/components/breadcrumbs";
-import { Page } from "@/components/page";
+import { Page, PageHeader } from "@/components/page";
 import { deleteMaterial } from "./actions";
 import { buttonVariants } from "@/components/ui/button";
 import { ConfirmButton } from "@/components/ui/confirm-button";
+import { ExtChip } from "@/components/ui/ext-chip";
+import { Section, SectionLabel } from "@/components/ui/section";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  MetaDot,
+  Panel,
+  PanelRow,
+  RowEnd,
+  RowMain,
+  RowMeta,
+  RowTitle,
+} from "@/components/ui/panel";
 
 /**
  * The session detail page — the organising screen of the app. One route serves
@@ -47,14 +51,14 @@ export default async function SessionPage({
 
   return (
     <Page>
-      <div>
+      <div className="flex flex-col gap-4">
         {/* A student has no class page of their own, so their class crumb is
             context rather than a link. */}
         <Breadcrumbs
           items={
             isOwner
               ? [
-                  { label: "Dashboard", href: "/dashboard" },
+                  { label: "Classes", href: "/dashboard" },
                   { label: klass.name, href: `/classes/${klass.id}` },
                   { label: session.title ?? "Untitled lesson" },
                 ]
@@ -65,20 +69,15 @@ export default async function SessionPage({
                 ]
           }
         />
-        <div className="mt-2 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold">
-              {session.title ?? "Untitled lesson"}
-            </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              <SessionDateTime
-                at={session.scheduledAt}
-                tutorTimezone={session.timezone}
-              />
-            </p>
-          </div>
-          <SessionWhen at={session.scheduledAt} />
-        </div>
+        <PageHeader
+          title={session.title ?? "Untitled lesson"}
+          sub={
+            <SessionDateTime
+              at={session.scheduledAt}
+              tutorTimezone={session.timezone}
+            />
+          }
+        />
       </div>
 
       {isOwner && (
@@ -89,90 +88,68 @@ export default async function SessionPage({
         />
       )}
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground">
-          Materials ({sessionMaterials.length})
-        </h2>
-
-        {sessionMaterials.length === 0 ? (
-          <Card>
-            <CardContent className="p-4 text-sm text-muted-foreground">
-              {isOwner
-                ? "No materials yet. Upload one below."
-                : "Your tutor hasn't added any materials to this lesson."}
-            </CardContent>
-          </Card>
-        ) : (
-          sessionMaterials.map((m) => (
-            <Card key={m.materialId}>
-              <CardContent className="flex items-center justify-between gap-4 p-4">
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">
-                    {m.title ?? m.originalFilename}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {m.originalFilename} · {formatBytes(m.sizeBytes)}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {/* Plain link: the route authorizes, then redirects to a
-                      short-lived signed URL. No signed URL is ever rendered
-                      into the page itself. */}
-                  <a
-                    href={`/api/materials/${m.materialId}/download`}
-                    className={buttonVariants({ variant: "outline", size: "sm" })}
+      <Section aria-label="Materials">
+        <SectionLabel>Materials</SectionLabel>
+        <Panel>
+          {sessionMaterials.length === 0 && (
+            <PanelRow>
+              <RowMeta>
+                {isOwner
+                  ? "No materials yet — add one below."
+                  : "Your tutor hasn't added any materials to this lesson."}
+              </RowMeta>
+            </PanelRow>
+          )}
+          {sessionMaterials.map((m) => (
+            <PanelRow key={m.materialId}>
+              <ExtChip filename={m.originalFilename} mimeType={m.mimeType} />
+              <RowMain>
+                <RowTitle>{m.title ?? m.originalFilename}</RowTitle>
+                <RowMeta>
+                  {m.originalFilename} <MetaDot /> {formatBytes(m.sizeBytes)}
+                </RowMeta>
+              </RowMain>
+              <RowEnd>
+                {/* Plain link: the route authorizes, then redirects to a
+                    short-lived signed URL. No signed URL is ever rendered
+                    into the page itself. */}
+                <a
+                  href={`/api/materials/${m.materialId}/download`}
+                  className={buttonVariants({ variant: "outline", size: "sm" })}
+                >
+                  Download
+                </a>
+                {isOwner && (
+                  <ConfirmButton
+                    action={deleteMaterial.bind(null, m.materialId)}
+                    title="Remove this material?"
+                    body="Students in this class will no longer see it."
+                    confirmLabel="Remove"
                   >
-                    Download
-                  </a>
-                  {isOwner && (
-                    <ConfirmButton
-                      action={deleteMaterial.bind(null, m.materialId)}
-                      title="Remove this material?"
-                      body="Students in this class will no longer see it."
-                      confirmLabel="Remove"
-                    >
-                      Remove
-                    </ConfirmButton>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
+                    Remove
+                  </ConfirmButton>
+                )}
+              </RowEnd>
+            </PanelRow>
+          ))}
+          {isOwner && <AddMaterialRow sessionId={session.id} />}
+        </Panel>
+      </Section>
 
-        {isOwner && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Add material</CardTitle>
-              <CardDescription>
-                Students in this class can download it.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <UploadMaterialForm sessionId={session.id} />
-            </CardContent>
-          </Card>
-        )}
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-sm font-medium text-muted-foreground">Homework</h2>
-        <Card>
-          <CardContent className="p-4 text-sm text-muted-foreground">
-            No homework issued in this lesson.
-          </CardContent>
-        </Card>
-      </section>
+      <Section aria-label="Homework">
+        <SectionLabel>Homework</SectionLabel>
+        <Panel>
+          <PanelRow>
+            <RowMeta>No homework issued in this lesson.</RowMeta>
+          </PanelRow>
+        </Panel>
+      </Section>
 
       {!isOwner && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Your tutor runs this lesson</CardTitle>
-            <CardDescription>
-              Materials and homework will appear here once your tutor adds them.
-            </CardDescription>
-          </CardHeader>
-        </Card>
+        <p className="text-[13px] text-faint">
+          Your tutor runs this lesson — materials and homework appear here once
+          they add them.
+        </p>
       )}
     </Page>
   );
