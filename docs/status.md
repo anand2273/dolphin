@@ -141,8 +141,9 @@ and after.
   `<dialog showModal()>`. No new dependency.
 - `components/upload-material-form.tsx` — `XMLHttpRequest` in place of `fetch`,
   because only the former reports upload progress. Determinate bar plus cancel.
-- `components/breadcrumbs.tsx` — replaces the ad-hoc back links. Item #3 is only
-  *partially* closed: still no shell, and sign-out remains on two pages.
+- `components/breadcrumbs.tsx` — replaces the ad-hoc back links. At the time
+  this closed item #3 only *partially*; the UI overhaul later delivered the
+  shell itself (see below).
 - `lib/notices.ts` + `components/notice.tsx` — acknowledgement for the one action
   that navigates you away (`deleteSession`). The `?notice=` param is a key mapped
   through a fixed table, never rendered raw.

@@ -53,7 +53,7 @@ lib/
     migrations/    drizzle-owned; NOT supabase/migrations
   storage/         private bucket, opaque keys, signed URLs
   validation/      zod schemas
-components/        ui/ holds shadcn primitives
+components/        shell + forms; ui/ holds the primitives (shadcn + panel/row/pill/dialog)
 tests/             authz tests, negatives included
 ```
 

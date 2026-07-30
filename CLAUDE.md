@@ -217,8 +217,8 @@ lib/
     migrations/         # drizzle-owned; there is no supabase/migrations
   storage/              # private bucket, opaque keys, signed URLs
   validation/           # zod schemas
-components/
-  ui/                   # shadcn primitives
+components/             # shell (top-bar, page, auth-card), forms, date rendering
+  ui/                   # shadcn primitives + the app's own (panel/row, pill, ext-chip, form-dialog)
 tests/                  # authz tests, negatives included
 docs/                   # see the Documentation section above
 ```

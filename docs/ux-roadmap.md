@@ -1,9 +1,12 @@
 # Dolphn — UI/UX Roadmap
 
-v1's interface was built to prove the domain model and the authorization
-boundaries, not to be pleasant. It is deliberately thin: shadcn primitives,
-stacked cards, no shell. This is the list of what that cost, ordered by what
-would hurt a real tutor first.
+v1's interface was first built to prove the domain model and the authorization
+boundaries, not to be pleasant: shadcn primitives, stacked cards, no shell.
+This file is the list of what that cost, ordered by what would hurt a real
+tutor first. The **UI overhaul (Jul 2026)** closed most of it — the app now
+carries the approved mockup's design language: paper/sea tokens (light and
+dark), a persistent top-bar shell, and panel/row lists with date chips. Items
+below are marked with what remains.
 
 Nothing here changes behaviour or security — it is all presentation and
 interaction. Anything that touches what a user is *allowed* to do belongs in
@@ -62,7 +65,10 @@ not already show the result:
 
 Everything else already announces itself: a created class, a created lesson and
 an uploaded material appear as a new row; a revoked invitation and a removed
-material vanish; the invite form already said "Invitation sent."
+material vanish. *(Since the overhaul moved the create/invite forms into
+dialogs, success closes the dialog and the new row is the acknowledgement —
+the inline "Invitation sent." line only shows if the form is ever rendered
+outside one.)*
 
 ### 5. Nothing indicated work in flight — **done**
 Not originally on this list, but the same complaint as #2 one level up: every
@@ -114,16 +120,25 @@ stored filename with the recorded MIME as fallback.
 
 ## P3 — Polish
 
-### 11. Accessibility
+### 11. Accessibility — **partially improved**
+Landed with the overhaul: a global `:focus-visible` outline for links and
+disclosure summaries (buttons carry their own ring), `prefers-reduced-motion`
+kills transitions, and every modal is the platform's `<dialog showModal()>` —
+focus trap and Esc for free. Still open:
+
 - Form errors are plain `<p>` with no `aria-live`, so screen readers miss them
 - The edit panel toggles without moving focus
 - The file input is unstyled and inconsistent with other controls
-- Colour contrast on `text-muted-foreground` over card backgrounds is unverified
+- Colour contrast of the new palette (`muted-foreground`/`faint` on card and
+  paper grounds) is unverified in both themes
 
 ### 12. Mobile
-Layouts use `max-w-*` and `md:` breakpoints but have not been tested on a real
-handset. Tutors will absolutely use this on a phone between lessons — the
-class page's two-column grid is the first thing to check.
+Still untested on a real handset, though the overhaul removed the riskiest
+layout (the class page's two-column grid is gone; every page is one column
+under a 960px cap). Things to check: the top bar hides its nav under 640px
+(brand and sign-out remain), dialog width on small screens, and the dashboard
+card grid at phone widths. Tutors will absolutely use this on a phone between
+lessons.
 
 ### 13. No dark mode — **done**
 The token layer now carries the full dark palette from the UI-direction mockup,
