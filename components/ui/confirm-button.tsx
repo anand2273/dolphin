@@ -23,6 +23,7 @@ export function ConfirmButton({
   confirmLabel,
   variant = "ghost",
   size = "sm",
+  triggerClassName,
   children,
 }: {
   /** A Server Action with its subject already bound. */
@@ -32,6 +33,8 @@ export function ConfirmButton({
   confirmLabel: string;
   variant?: ButtonProps["variant"];
   size?: ButtonProps["size"];
+  /** Extra classes for the trigger, e.g. the quiet danger-link treatment. */
+  triggerClassName?: string;
   children: React.ReactNode;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -44,6 +47,7 @@ export function ConfirmButton({
         type="button"
         variant={variant}
         size={size}
+        className={triggerClassName}
         onClick={() => dialogRef.current?.showModal()}
       >
         {children}

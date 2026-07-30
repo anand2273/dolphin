@@ -8,7 +8,7 @@ import { EditSessionPanel } from "@/components/edit-session-panel";
 import { AddMaterialRow } from "@/components/add-material-row";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { Page, PageHeader } from "@/components/page";
-import { deleteMaterial } from "./actions";
+import { deleteMaterial, deleteSession } from "./actions";
 import { buttonVariants } from "@/components/ui/button";
 import { ConfirmButton } from "@/components/ui/confirm-button";
 import { ExtChip } from "@/components/ui/ext-chip";
@@ -150,6 +150,30 @@ export default async function SessionPage({
           Your tutor runs this lesson — materials and homework appear here once
           they add them.
         </p>
+      )}
+
+      {/* Destructive action lives down here, away from the routine Edit
+          control — same settings-row pattern as the class page. */}
+      {isOwner && (
+        <div className="flex items-center justify-between gap-4 text-[13px] text-faint">
+          <span>
+            Created{" "}
+            {session.createdAt.toLocaleDateString(undefined, {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+            })}
+          </span>
+          <ConfirmButton
+            action={deleteSession.bind(null, session.id)}
+            title="Delete this lesson?"
+            body="Its materials and any homework go with it."
+            confirmLabel="Delete"
+            triggerClassName="h-auto px-1 py-0.5 text-[13px] font-normal text-faint underline underline-offset-2 hover:bg-transparent hover:text-destructive"
+          >
+            Delete this lesson…
+          </ConfirmButton>
+        </div>
       )}
     </Page>
   );

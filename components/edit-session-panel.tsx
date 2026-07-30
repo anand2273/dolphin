@@ -3,10 +3,9 @@
 // page itself stays a Server Component.
 
 import { useState } from "react";
-import { updateSession, deleteSession } from "@/app/sessions/[sessionId]/actions";
+import { updateSession } from "@/app/sessions/[sessionId]/actions";
 import { SessionForm } from "@/components/session-form";
 import { Button } from "@/components/ui/button";
-import { ConfirmButton } from "@/components/ui/confirm-button";
 import {
   Card,
   CardContent,
@@ -26,20 +25,14 @@ export function EditSessionPanel({
 }) {
   const [open, setOpen] = useState(false);
 
+  // Deleting lives in the page's footer settings row, away from Edit —
+  // destructive and routine actions shouldn't share a cluster.
   if (!open) {
     return (
       <div className="flex gap-2">
         <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
           Edit lesson
         </Button>
-        <ConfirmButton
-          action={deleteSession.bind(null, sessionId)}
-          title="Delete this lesson?"
-          body="Its materials and any homework go with it."
-          confirmLabel="Delete"
-        >
-          Delete
-        </ConfirmButton>
       </div>
     );
   }
