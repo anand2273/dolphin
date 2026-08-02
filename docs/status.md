@@ -4,7 +4,7 @@
 with no code behind them yet — that is deliberate (see the forward-compat hooks
 in [`../CLAUDE.md`](../CLAUDE.md)), not an oversight.
 
-Last updated: UI overhaul (post-CP5).
+Last updated: Syllabus creation — backend (post-UI-overhaul).
 
 ---
 
@@ -22,10 +22,12 @@ Last updated: UI overhaul (post-CP5).
 | — | UX P1 — confirmations, upload progress, breadcrumbs, spinners | Done |
 | — | Class deletion (type-to-confirm soft delete) | Done |
 | — | UI overhaul — shell, mockup design language, dark mode | Done |
+| — | Syllabus creation — backend (schema, upload, presets, async extraction) | Done |
+| — | Syllabus creation — UI (Syllabi tab, editor) | **Not started** |
 | CP6 | Assignments and submissions | **Not started** |
-| CP7+ | Everything in [`future-enhancements.md`](future-enhancements.md) | Not started |
+| CP7+ | Everything else in [`future-enhancements.md`](future-enhancements.md) | Not started |
 
-**62 tests, all passing.** Every one is an authorization test; the suite is
+**71 tests, all passing.** Every one is an authorization test; the suite is
 deliberately weighted toward negative cases.
 
 ---
@@ -188,6 +190,43 @@ the owning tutor before any row is read. Everything future-facing in the mockup
 (Library, whiteboard, homework question sets, syllabus pills) was deliberately
 left out — see the scope rules in CLAUDE.md.
 
+## Syllabus creation — backend only
+
+The first stage explicitly beyond v1 — see the "LLM calls" carve-out in
+[`../CLAUDE.md`](../CLAUDE.md). Schema, storage, authorization, actions, presets
+and the async extraction worker are built; **there is no Syllabi tab or editor
+UI yet** — this checkpoint is backend-only, by request.
+
+- `lib/db/schema.ts` — three new tables (`syllabuses`, `concepts`,
+  `topic_concepts`), plus `topics` reshaped to be syllabus-scoped (was an
+  unused hook with zero rows and zero code touching it — see CP1's "built but
+  unused" note below, now retired). `assignment_topics` is untouched.
+- `lib/auth/authz.ts` — `assertSyllabusOwner`: ownership only, no class
+  membership — a syllabus is tutor-owned and independent of any class.
+- `lib/db/queries/syllabuses.ts` — `listSyllabiForTutor`, `getSyllabusForOwner`,
+  `listTopicsForSyllabus` (with each topic's concepts), `listConceptsForTutor`.
+- `app/(tutor)/syllabi/actions.ts`, `app/(tutor)/syllabi/[syllabusId]/actions.ts`
+  — manual creation, preset-clone, the three-step document upload
+  (mint → browser PUT → confirm, same shape as materials), topic/concept CRUD.
+- `lib/storage/config.ts` — new `syllabus-documents` private bucket, narrower
+  MIME allowlist than materials (documents, not photos). `lib/storage/objects.ts`
+  now takes the bucket explicitly instead of assuming `materials`.
+- `lib/syllabus-presets/` — static code fixtures (PSLE Mathematics, Cambridge
+  IGCSE Mathematics 0580 today), not DB rows. "Create from preset" deep-copies
+  one into a new, fully independent tutor-owned syllabus.
+- `lib/queue/syllabus-extraction.ts` + `worker/` — BullMQ + Redis. The Next app
+  only enqueues; a standalone worker process (outside Vercel, which can't host
+  one) consumes the queue, calls Gemini, and writes `topics`/`concepts`/
+  `topic_concepts`. See the "Syllabus extraction" section of `../CLAUDE.md`.
+- `tests/authz.syllabus.test.ts` — 9 tests: rival tutor and student both
+  denied at every layer (assert, query, list), soft-delete hides the syllabus
+  from its own tutor too.
+
+**Not built**: the Syllabi tab itself, `classes.syllabus_id` (attaching a
+syllabus to a class), and assignment tagging from a syllabus's topics (still
+waiting on CP6). The worker also isn't deployed anywhere yet — it runs locally
+via `pnpm worker:dev` today.
+
 ## Deployment
 
 Live on Vercel with a Supabase cloud project and Resend for transactional email
@@ -207,8 +246,12 @@ work, and CP6 will be the first thing to write to them.
 | `assignments`, `assignment_attachments` | CP6 |
 | `submissions`, `submission_attachments` | CP6 |
 | `feedback` | CP6 (`author_type` reserved for a future agent) |
-| `topics`, `assignment_topics` | tutor tagging; the hook analytics would aggregate on |
-| `attachments.extracted_text`, `extraction_status` | the AI layer; no extraction happens in v1 |
+| `assignment_topics` | CP6 — tagging an assignment with a syllabus's topics |
+| `attachments.extracted_text`, `extraction_status` | the AI layer; no OCR-style extraction happens in v1 |
+
+`topics` is no longer in this table — the syllabus-creation backend gave it a
+real shape and real writers (manual creation, preset-clone, the extraction
+worker). It just has no UI yet, same as everything else in this checkpoint.
 
 ## Known gaps
 
@@ -228,3 +271,9 @@ Ordered by how much they matter.
    doesn't return you afterwards.
 7. **No email delivery monitoring.** A failed invitation is discovered by the
    student not turning up.
+8. **The syllabus-extraction worker isn't deployed anywhere.** It runs locally
+   via `pnpm worker:dev` against local Redis; there's no Railway (or
+   equivalent) service, no production Redis, and no `GEMINI_API_KEY` in any
+   deployed environment yet.
+9. **No Syllabi tab UI.** The backend (schema, actions, worker) is done; a
+   tutor cannot reach any of it without Server Action calls today.

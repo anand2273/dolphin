@@ -74,8 +74,13 @@ resource* via the relationship check (owner / enrolled / none).
 | **Feedback** |
 | 36 | Add feedback to a submission | ✔ | ✘ | ✘ | ✘ |
 | 37 | View feedback on **own** submission | ✔ | ✔ | ✘ | ✘ |
-| **Topics (AI hook)** |
-| 38 | Create / tag topics on an assignment | ✔ | ✘ | ✘ | ✘ |
+| **Syllabus** ⁸ |
+| 38 | Create syllabus (manual, upload, or from preset) | ✔ | ✘ | ✘ | ✘ |
+| 39 | View / list **own** syllabuses, topics, concepts | ✔ | ✘ | ✘ | ✘ |
+| 40 | Edit syllabus, its topics, or its concepts | ✔ | ✘ | ✘ | ✘ |
+| 41 | Soft-delete syllabus | ✔ | ✘ | ✘ | ✘ |
+| **Assignment topics (still CP6-unbuilt)** |
+| 42 | Create / tag topics on an assignment | ✔ | ✘ | ✘ | ✘ |
 
 ### Footnotes
 1. **A student never sees another student's identity list.** Even inside a
@@ -104,6 +109,14 @@ resource* via the relationship check (owner / enrolled / none).
    condition, "set a new password" collapses into row 3 and anyone at an
    unattended signed-in browser can take the account over. Completing a reset
    revokes every other session for that account.
+8. **A syllabus has no class and no "enrolled" relationship at all.** The
+   "Tutor" column here means *the syllabus's own owning tutor* specifically —
+   there is no "Enrolled student" or "Other student" case to distinguish,
+   because a syllabus is a standalone resource (`classes.syllabus_id` isn't
+   built yet). Every non-owner — a different tutor or any student — is a
+   **Stranger** by the column definition above. `assertSyllabusOwner` is a
+   single ownership check (`syllabus.tutorId === userId`), not the two-question
+   class-relationship pattern the rest of this matrix uses.
 
 ## The two questions the helper asks on every request
 
@@ -118,6 +131,11 @@ Per CLAUDE.md, `lib/auth` resolves, for the current user + target resource:
 Both must pass. The resource's class is always re-derived on the server from the
 resource id — never taken from the client.
 
+**Syllabus is the one exception** (footnote 8): there's no class to re-derive,
+so `assertSyllabusOwner` collapses both questions into one ownership check —
+membership *is* the capability, since only the owning tutor has a relationship
+to a syllabus at all.
+
 ## Highest-value negative tests (write these as we build each slice)
 
 - Tutor **B** cannot read Tutor **A**'s class / session / material / submission. (rows 6,15,20,32)
@@ -130,3 +148,5 @@ resource id — never taken from the client.
 - Signed URL minted for user X's submission is **not** issued to user Y. (row 33)
 - A signed-in session with **no** recovery marker cannot set a new password, and
   a marker minted for user X cannot be spent by user Y. (row 4b / footnote 7)
+- Tutor **B** cannot read, edit, or list Tutor **A**'s syllabus, topics, or
+  concepts, and a student has no path to any of them at all. (rows 38–41)

@@ -101,20 +101,65 @@ CORE DOMAIN                                        |
        extraction_status (none|pending|processing|done|failed)
 
 
+SYLLABUS CREATION (backend only — no Syllabi tab UI yet; see status.md)
+-------------------------------------------------------------------------
+  Independent of the class/session tree above. Tutor-owned; a class doesn't
+  reference a syllabus yet (`classes.syllabus_id` is not built).
+
+  syllabuses (sd)
+    PK id
+    FK-> profiles (tutor_id)
+       title, subject(free text), level(free text), description
+       FK-> attachments (source_attachment_id, nullable) <- uploaded doc, if any
+       preset_key (nullable)          <- provenance only; never a live reference
+       extraction_status (none|pending|processing|done|failed)  <- own enum,
+         distinct from attachments.extraction_status (structured pipeline,
+         not OCR text)
+      |
+      | 1:N
+      v
+  topics (sd)                     topic_concepts (join)
+    PK id                           PK (topic_id, concept_id)
+    FK-> syllabuses.id              FK-> topics.id
+    FK-> profiles (tutor_id,        FK-> concepts.id
+         denormalized)
+       name (unique per syllabus)
+       description, order_index      |
+      |                              | N:M
+      | assignments N:M (join:       v
+      |  assignment_topics,        concepts (sd)
+      |  still CP6-unbuilt)          PK id
+      v                              FK-> profiles (tutor_id)
+  assignments (see above)              name (unique per tutor)
+                                        description
+                                     <- not tied to one topic or one syllabus;
+                                        the same concept can stretch across both
+
+  Async extraction: uploading a syllabus document sets extraction_status =
+  "pending" and enqueues a BullMQ job. A standalone worker process (outside
+  this app, outside Vercel) calls Gemini and writes topics/concepts/
+  topic_concepts, then flips the status to "done" or "failed". See
+  ../CLAUDE.md's "Syllabus extraction" section.
+
+  Presets (PSLE Mathematics, Cambridge IGCSE Mathematics 0580, ...) are static
+  code fixtures in lib/syllabus-presets/, NOT rows — there is no is_preset flag
+  and no nullable tutor_id. "Create from preset" deep-copies a fixture into a
+  brand-new syllabus + topics + concepts, fully independent from the moment
+  it's created.
+
+
 AI FORWARD-COMPAT HOOKS (columns/tables only; no behaviour in v1)
 -----------------------------------------------------------------
 
-  topics (sd)                     assignment_topics (join)
-    PK id                           PK (assignment_id, topic_id)
-    FK-> profiles (tutor_id)        FK-> assignments.id
-       name (unique per tutor)      FK-> topics.id
-        \__________________________/  tutor-tagged, optional
+  assignment_topics (join) — still unwritten; waiting on CP6 to let a tutor tag
+  an assignment with topics from the syllabus its class follows.
 
   events (append-only; NO soft-delete)
     PK id
     FK-> profiles (actor_id, nullable)
        verb, subject_type, subject_id, payload(jsonb), occurred_at
-    written on: material.uploaded, assignment.issued, submission.submitted, feedback.added
+    written on: material.uploaded, assignment.issued, submission.submitted,
+      feedback.added, syllabus.created, syllabus.document_uploaded
 
 
 CARDINALITY SUMMARY
@@ -128,5 +173,8 @@ CARDINALITY SUMMARY
   assignments      1 --- N  submissions        (append-only versions)
   submissions      1 --- N  feedback
   attachments      1 --- N  materials / assignment_attachments / submission_attachments
-  profiles(tutor)  1 --- N  topics
-  assignments      N --- N  topics             (through assignment_topics)
+  profiles(tutor)  1 --- N  syllabuses
+  syllabuses       1 --- N  topics
+  profiles(tutor)  1 --- N  concepts
+  topics           N --- N  concepts           (through topic_concepts)
+  assignments      N --- N  topics             (through assignment_topics, CP6-unbuilt)

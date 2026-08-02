@@ -47,6 +47,34 @@ export function isAllowedMimeType(value: string): value is AllowedMimeType {
 /** For the file picker's `accept` attribute. Advisory only — never a check. */
 export const ACCEPT_ATTRIBUTE = ALLOWED_MIME_TYPES.join(",");
 
+/**
+ * Private bucket for tutor-uploaded syllabus source documents (what the async
+ * extraction worker reads from). Separate from `materials` — this bucket holds
+ * curriculum documents, not session files, and only the extraction worker and
+ * the owning tutor ever read from it.
+ */
+export const SYLLABUS_DOCUMENTS_BUCKET = "syllabus-documents";
+
+/** Narrower than the materials allowlist — a syllabus document is text, not a photo. */
+export const SYLLABUS_DOCUMENT_MIME_TYPES = [
+  "application/pdf",
+  "text/plain",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+] as const;
+
+export type SyllabusDocumentMimeType =
+  (typeof SYLLABUS_DOCUMENT_MIME_TYPES)[number];
+
+export function isAllowedSyllabusDocumentMimeType(
+  value: string,
+): value is SyllabusDocumentMimeType {
+  return (SYLLABUS_DOCUMENT_MIME_TYPES as readonly string[]).includes(value);
+}
+
+export const SYLLABUS_DOCUMENT_ACCEPT_ATTRIBUTE =
+  SYLLABUS_DOCUMENT_MIME_TYPES.join(",");
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;

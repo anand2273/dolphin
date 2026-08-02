@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { classes, profiles } from "@/lib/db/schema";
+import { classes, profiles, syllabuses } from "@/lib/db/schema";
 
 /**
  * Admin Supabase client (service-role) — TEST ONLY. Used to create real
@@ -54,9 +54,22 @@ export async function createTestClass(
   return row.id;
 }
 
-/** Tear down a test user: their classes, profile, and the auth.users row. */
+/** Insert a syllabus owned by the given tutor. Returns the syllabus id. */
+export async function createTestSyllabus(
+  tutorId: string,
+  title = "Test Syllabus",
+): Promise<string> {
+  const [row] = await db
+    .insert(syllabuses)
+    .values({ tutorId, title })
+    .returning({ id: syllabuses.id });
+  return row.id;
+}
+
+/** Tear down a test user: their classes, syllabuses, profile, and the auth.users row. */
 export async function deleteTestUser(user: TestUser) {
   await db.delete(classes).where(eq(classes.tutorId, user.id));
+  await db.delete(syllabuses).where(eq(syllabuses.tutorId, user.id));
   await db.delete(profiles).where(eq(profiles.id, user.id));
   await admin.auth.admin.deleteUser(user.id);
 }

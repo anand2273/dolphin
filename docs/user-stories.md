@@ -127,6 +127,39 @@ only current work.*
 - A pending invite link for the class stops working (lands on `/link-expired`)
 - I land back on my dashboard with a "Class deleted." acknowledgement
 
+### US-T15 · Build a syllabus from a document · Partial (backend only) · FR-9
+*As a tutor, I want to upload the syllabus I'm teaching to, so I don't have to
+type out every topic and concept by hand.*
+
+- I upload a document; a "processing" state shows while it's mined for topics
+  and concepts
+- Once done, the syllabus shows its extracted topics, each with its concepts
+- If extraction fails, I see why and can retry
+- **Gap:** there is no UI for any of this yet — it exists as Server Actions only
+
+### US-T16 · Build a syllabus by hand · Partial (backend only) · FR-9
+*As a tutor, I want to type in a syllabus myself, for a curriculum I know well
+or one a document wouldn't parse cleanly.*
+
+- I can create a syllabus with just a title, then add topics and concepts myself
+- **Gap:** no UI yet
+
+### US-T17 · Start from a preset · Partial (backend only) · FR-9
+*As a tutor, I want to pick a common Singapore-tutored curriculum instead of
+starting from nothing.*
+
+- Selecting a preset gives me a fully-populated syllabus immediately
+- Editing my copy never changes the preset or anyone else's syllabus
+- **Gap:** no UI yet
+
+### US-T18 · Edit a syllabus over time · Partial (backend only) · FR-9
+*As a tutor, I want to add, rename, or remove topics and concepts as my
+understanding of the curriculum improves.*
+
+- I can rename a topic, change its concepts, or delete it entirely
+- Deleting a syllabus is a soft delete, same as everything else user-visible
+- **Gap:** no UI yet
+
 ---
 
 ## Student — invited, low-privilege
@@ -209,4 +242,5 @@ account from my email, without asking anyone.*
 | US-T10 | FR-6 Assignments | Planned |
 | US-T11, US-T12, US-S5, US-S6, US-S7 | FR-7 Submissions | Planned |
 | US-T13 | FR-8 Profiles | Partial |
+| US-T15, US-T16, US-T17, US-T18 | FR-9 Syllabus creation | Partial (backend only) |
 | US-T9 | NFR-1, NFR-2 | Built |

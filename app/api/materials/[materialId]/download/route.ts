@@ -32,6 +32,7 @@ export async function GET(
   }
 
   const signedUrl = await createSignedDownloadUrl(
+    material.bucket,
     material.objectKey,
     material.originalFilename,
   );

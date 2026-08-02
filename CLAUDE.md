@@ -16,7 +16,9 @@ v1 is a **session-centric file and homework system**. The AI layer (material gen
 
 ## Out of scope for v1 — do not build
 
-LLM calls of any kind, auto-marking, analytics dashboards, note editing, payments or invoicing, calendar sync, scheduling, notifications beyond one transactional email, in-app messaging, mobile apps, multi-tutor agencies or orgs, admin panels.
+Auto-marking, analytics dashboards, note editing, payments or invoicing, calendar sync, scheduling, notifications beyond one transactional email, in-app messaging, mobile apps, multi-tutor agencies or orgs, admin panels.
+
+**LLM calls are permitted for exactly one purpose**: mining topics and concepts out of a tutor-uploaded syllabus document (see Syllabus below). *Decided 2026-08: this is the one deliberate exception to the original "no LLM calls of any kind" rule — the syllabus-creation stage is the next thing being built after v1, not part of v1 itself.* No other AI feature (auto-marking, generation, analytics) is in scope until each is separately greenlit.
 
 If a task appears to require any of the above, **stop and ask** rather than building a partial version.
 
@@ -35,9 +37,11 @@ If a task appears to require any of the above, **stop and ask** rather than buil
 | **Submission** | A student's response to an assignment. |
 | **Attachment** | A stored-file row. Materials and submissions both point at attachments. |
 | **Feedback** | A tutor's comment on a specific submission version. `author_type` reserves room for a future agent; v1 only ever writes tutor rows. |
-| **Topic** | An optional, tutor-applied tag on an assignment. The thing later analytics aggregate on. |
-| **Syllabus** | *(future — no code in v1)* An optional curriculum a class follows (e.g. "CIE IGCSE Mathematics 0580"). Tutor-owned; many classes may follow one syllabus. A class without one is fully functional. |
-| **Library** | *(future — no code in v1)* The tutor's own separate destination holding syllabus-scoped, reusable materials and, later, the question bank. A library material reaches students only by being attached to a session. |
+| **Topic** | A tutor-curated unit of a syllabus (e.g. "Algebra"). Populated by LLM extraction from an uploaded document, by hand, or cloned from a preset. Every topic belongs to exactly one syllabus. Assignment tagging (not yet built) will pick from the topics of the syllabus a class follows. |
+| **Concept** | A tutor-owned piece of vocabulary a topic references (e.g. "Quadratic Formula"). Not tied to one topic or one syllabus — the same concept can stretch across both, within that tutor's own account. The thing later analytics aggregate on. |
+| **Syllabus** | An optional curriculum, tutor-owned and independent of any class (e.g. "CIE IGCSE Mathematics 0580") — a class without one is fully functional. Populated by uploading a document (LLM-extracted into topics/concepts), by hand, or from a Preset. *`classes.syllabus_id` — attaching a syllabus to a class — is not yet built; this is currently a standalone resource.* |
+| **Preset** | A backend-authored syllabus template for a commonly tutored curriculum (e.g. Singapore's PSLE Mathematics). Lives as a static code fixture, not a database row. Selecting one deep-copies it into a new, fully independent tutor-owned syllabus. |
+| **Library** | *(future — no code yet)* The tutor's own separate destination holding syllabus-scoped, reusable materials and, later, the question bank. A library material reaches students only by being attached to a session. |
 
 Never introduce synonyms. If a new concept is genuinely needed, add it to this table in the same commit.
 
@@ -138,6 +142,28 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
   *before* minting. Signed URLs are short-lived and never rendered into a page.
 - Deleting a material is a soft delete; the object stays in the bucket. Student
   work and tutor uploads are not recoverable once the bytes are gone.
+- **`lib/storage/objects.ts` takes the bucket explicitly** — there is more than
+  one private bucket now (`materials`, `syllabus-documents`), each declared the
+  same twice-over way in `supabase/config.toml` + `lib/storage/config.ts`.
+
+## Syllabus extraction (async worker)
+
+- Uploading a syllabus document writes `syllabuses` with `extraction_status:
+  "pending"` and enqueues a BullMQ job — the Next.js app is a **producer only**,
+  never a consumer. A standalone process at `worker/` (run with `pnpm
+  worker:dev` / `pnpm worker:start`) does the Gemini call and writes
+  `topics`/`concepts`/`topic_concepts`, because Vercel cannot host the
+  persistent process a queue consumer needs.
+- The worker needs its own env: `REDIS_URL`, `DATABASE_URL`, `GEMINI_API_KEY`,
+  plus the Supabase service-role key `lib/storage/objects.ts` already uses.
+  None of these belong in the Vercel/Next env.
+- `syllabuses.extraction_status` (`none | pending | processing | done | failed`)
+  is a distinct enum from `attachments.extraction_status` — the latter tracks
+  OCR-style text extraction (still unused, still v1's AI hook); this one tracks
+  a structured pipeline that writes rows, not text.
+- Presets (`lib/syllabus-presets/`) are static code fixtures, not DB rows —
+  "create from preset" deep-copies a fixture into a new tutor-owned syllabus;
+  the fixture and any other tutor's data are never touched by that copy.
 
 ## Documentation
 
@@ -169,6 +195,17 @@ Settled and in production. No new dependencies without asking.
 
 Boring and well-trodden is the point.
 
+**Syllabus-extraction-only additions** (2026-08, greenlit alongside the LLM
+carve-out above — not part of the "boring and well-trodden" v1 stack, and not a
+precedent for adding AI tooling elsewhere without asking again):
+
+- `@google/generative-ai` (Gemini) — only ever imported from `worker/`, never
+  from `app/` or `lib/` the Next.js app touches
+- BullMQ + Redis (`ioredis`) — job queue between the Next app (producer) and
+  the worker (consumer)
+- The `worker/` process itself needs an always-on host outside Vercel (Railway
+  suggested); Redis needs its own instance
+
 ## Commands
 
 ```
@@ -183,6 +220,8 @@ pnpm db:migrate     # apply migrations
 pnpm db:studio
 pnpm sb:start       # local Supabase stack
 pnpm sb:stop
+pnpm worker:dev     # syllabus-extraction worker, watch mode (needs REDIS_URL, GEMINI_API_KEY)
+pnpm worker:start   # same, no watch — what production runs
 ```
 
 Two ways to lose an afternoon here:
@@ -203,7 +242,7 @@ Two ways to lose an afternoon here:
 ```
 app/
   (auth)/               # login, signup, signup/student, forgot/reset-password, link-expired
-  (tutor)/              # tutor-only: dashboard, classes/[classId]
+  (tutor)/              # tutor-only: dashboard, classes/[classId], syllabi/[syllabusId]
   (student)/            # student-only: student
   sessions/[sessionId]/ # session detail — ONE route, serves both roles
   invite/accept/        # invitation acceptance (NOT under (auth))
@@ -212,11 +251,14 @@ app/
 lib/
   auth/                 # session, roles, guards, request origin, recovery gate, THE authz helper
   db/
-    schema.ts           # all 15 tables
+    schema.ts           # all 18 tables
     queries/            # all reads — each authorizes before returning rows
     migrations/         # drizzle-owned; there is no supabase/migrations
-  storage/              # private bucket, opaque keys, signed URLs
+  storage/              # private buckets (materials, syllabus-documents), opaque keys, signed URLs
+  queue/                # BullMQ producer side — enqueues jobs, never processes one
+  syllabus-presets/      # static preset fixtures, not DB rows
   validation/           # zod schemas
+worker/                 # standalone process: consumes the syllabus-extraction queue, calls Gemini
 components/             # shell (top-bar, page, auth-card), forms, date rendering
   ui/                   # shadcn primitives + the app's own (panel/row, pill, ext-chip, form-dialog)
 tests/                  # authz tests, negatives included

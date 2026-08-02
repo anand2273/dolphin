@@ -1,10 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createSupabaseAdminClient } from "@/lib/auth/supabase-admin";
-import {
-  MATERIALS_BUCKET,
-  SIGNED_DOWNLOAD_TTL_SECONDS,
-  SIGNED_UPLOAD_TTL_SECONDS,
-} from "./config";
+import { SIGNED_DOWNLOAD_TTL_SECONDS, SIGNED_UPLOAD_TTL_SECONDS } from "./config";
 
 /**
  * The only module that talks to object storage. Everything here is server-only:
@@ -12,6 +8,10 @@ import {
  * therefore cannot initialize in the browser. Every function assumes the CALLER
  * HAS ALREADY AUTHORIZED — none of these do an access check, so never expose one
  * directly to a client component or a route without a guard in front.
+ *
+ * Every function takes the target bucket explicitly (materials, syllabus
+ * documents, ...) rather than assuming one — there is more than one private
+ * bucket in this app now.
  *
  * This is also one of the three deliberate vendor touchpoints; swapping Supabase
  * Storage for S3 later means rewriting this file and nothing else.
@@ -28,10 +28,10 @@ export function generateObjectKey(): string {
 }
 
 /** A short-lived URL the browser can PUT bytes to. Authorize before calling. */
-export async function createSignedUploadUrl(objectKey: string) {
+export async function createSignedUploadUrl(bucket: string, objectKey: string) {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin.storage
-    .from(MATERIALS_BUCKET)
+    .from(bucket)
     .createSignedUploadUrl(objectKey, { upsert: false });
 
   if (error || !data) {
@@ -52,14 +52,17 @@ export type ObjectStat = { sizeBytes: number; mimeType: string };
  * for a 1 KB text file, push a 2 GB executable, and have us record the lie.
  * Returns null when nothing is there.
  */
-export async function statObject(objectKey: string): Promise<ObjectStat | null> {
+export async function statObject(
+  bucket: string,
+  objectKey: string,
+): Promise<ObjectStat | null> {
   const admin = createSupabaseAdminClient();
   const slash = objectKey.lastIndexOf("/");
   const prefix = slash === -1 ? "" : objectKey.slice(0, slash);
   const name = slash === -1 ? objectKey : objectKey.slice(slash + 1);
 
   const { data, error } = await admin.storage
-    .from(MATERIALS_BUCKET)
+    .from(bucket)
     .list(prefix, { limit: 1, search: name });
 
   if (error || !data?.length) return null;
@@ -78,12 +81,13 @@ export async function statObject(objectKey: string): Promise<ObjectStat | null> 
  * stands in for the bucket being private.
  */
 export async function createSignedDownloadUrl(
+  bucket: string,
   objectKey: string,
   downloadFilename?: string,
 ): Promise<string> {
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin.storage
-    .from(MATERIALS_BUCKET)
+    .from(bucket)
     .createSignedUrl(objectKey, SIGNED_DOWNLOAD_TTL_SECONDS, {
       download: downloadFilename ?? true,
     });
@@ -95,7 +99,7 @@ export async function createSignedDownloadUrl(
 }
 
 /** Best-effort cleanup of an object whose rows never got written. */
-export async function removeObject(objectKey: string): Promise<void> {
+export async function removeObject(bucket: string, objectKey: string): Promise<void> {
   const admin = createSupabaseAdminClient();
-  await admin.storage.from(MATERIALS_BUCKET).remove([objectKey]);
+  await admin.storage.from(bucket).remove([objectKey]);
 }

@@ -108,12 +108,43 @@ task appears to need one, stop and ask rather than building a partial version.
 Minimal tutor and student profiles exist (name, email, role). There is no
 profile editing UI.
 
+### FR-9 — Syllabus creation · Partial (backend only)
+
+The first stage explicitly beyond v1 scope — see the LLM carve-out in
+[`../CLAUDE.md`](../CLAUDE.md). Schema, actions, and the async extraction
+pipeline are built; **there is no Syllabi tab UI**, so a tutor cannot reach any
+of this without calling a Server Action directly.
+
+1. A tutor creates a syllabus by uploading a document, which an async worker
+   processes with Gemini to extract topics and, for each topic, the concepts
+   it covers.
+2. A tutor may instead create a syllabus manually, typing in topics and
+   concepts by hand.
+3. A tutor may edit an existing syllabus's topics and concept associations,
+   regardless of how it was created.
+4. A tutor may create a syllabus from a backend-authored preset (a static code
+   fixture, not a database row) and freely customize the copy afterwards —
+   editing it never affects the preset or any other tutor.
+5. A syllabus is tutor-owned and independent of any class; a class without one
+   loses nothing. Attaching a syllabus to a class (`classes.syllabus_id`) is
+   not built.
+6. Concepts are tutor-scoped, not tied to one topic or one syllabus — the same
+   concept may be referenced by topics across multiple syllabi that tutor owns.
+7. Extraction runs asynchronously: the Next.js app only enqueues a job; a
+   standalone worker process (outside Vercel) performs the Gemini call and
+   writes rows. `syllabuses.extraction_status` tracks progress
+   (`none|pending|processing|done|failed`).
+
 ### Out of scope for v1
 
-LLM calls of any kind · auto-marking · analytics dashboards · note editing ·
-payments or invoicing · calendar sync · scheduling · notifications beyond one
-transactional email · in-app messaging · mobile apps · multi-tutor agencies ·
-admin panels.
+Auto-marking · analytics dashboards · note editing · payments or invoicing ·
+calendar sync · scheduling · notifications beyond one transactional email ·
+in-app messaging · mobile apps · multi-tutor agencies · admin panels.
+
+**LLM calls are in scope for exactly one purpose** (FR-9.1): syllabus topic/
+concept extraction. No other AI feature (auto-marking, generation, analytics)
+is in scope until separately greenlit — see the 2026-08 decision in
+[`../CLAUDE.md`](../CLAUDE.md).
 
 ---
 
@@ -173,11 +204,16 @@ Exactly three Supabase touchpoints: `DATABASE_URL`, `lib/storage/`, `lib/auth/`.
 Domain data never goes through PostgREST — it is direct Postgres via Drizzle,
 which is why RLS is defense-in-depth only and not the security boundary.
 
+**New with syllabus creation:** a fourth external touchpoint, Gemini
+(`worker/gemini-extract.ts`), and a queue (BullMQ + Redis) between the Next app
+and the worker. Both are isolated to the syllabus-extraction pipeline — nothing
+else in the app depends on them.
+
 ### NFR-9 — Testability · Built
 
 Every authorization rule has a test, and the suite includes **negative** cases:
 student A cannot read student B's submission, tutor A cannot read tutor B's
-class, a student cannot issue an assignment. 56 tests currently.
+class, a student cannot issue an assignment. 71 tests currently.
 
 **Gap:** no Playwright E2E happy path yet, though CLAUDE.md calls for one.
 

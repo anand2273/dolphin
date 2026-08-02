@@ -140,6 +140,20 @@ allowed_mime_types = [
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ]
 
+# Syllabus source documents. PRIVATE — read only by the owning tutor and the
+# async extraction worker, never served with a public URL. Narrower MIME set
+# than materials: a syllabus document is text, not a photo. The limits here
+# intentionally duplicate lib/storage/config.ts — change both together.
+[storage.buckets.syllabus-documents]
+public = false
+file_size_limit = "25MiB"
+allowed_mime_types = [
+  "application/pdf",
+  "text/plain",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]
+
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true

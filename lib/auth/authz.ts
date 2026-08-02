@@ -1,7 +1,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { classes, enrollments } from "@/lib/db/schema";
+import { classes, enrollments, syllabuses } from "@/lib/db/schema";
 
 /**
  * THE single authorization helper (CLAUDE.md security invariant).
@@ -93,4 +93,28 @@ export async function assertClassMember(
   const { relationship, klass } = await resolveClassAccess(userId, classId);
   if (relationship === "none" || !klass) throw new AuthzError();
   return klass;
+}
+
+/**
+ * Syllabus ownership. A syllabus is tutor-owned and independent of any class
+ * (unlike materials/sessions, which resolve through class membership) — same
+ * shape as the old class-independent `topics` ownership, just spelled out as
+ * its own gate now that syllabuses exist. Students never have a relationship
+ * to a syllabus at all.
+ */
+export type Syllabus = InferSelectModel<typeof syllabuses>;
+
+export async function assertSyllabusOwner(
+  userId: string,
+  syllabusId: string,
+): Promise<Syllabus> {
+  const [syllabus] = await db
+    .select()
+    .from(syllabuses)
+    .where(and(eq(syllabuses.id, syllabusId), isNull(syllabuses.deletedAt)))
+    .limit(1);
+
+  // Don't distinguish "missing" from "not yours" — same non-leak rule as classes.
+  if (!syllabus || syllabus.tutorId !== userId) throw new AuthzError();
+  return syllabus;
 }

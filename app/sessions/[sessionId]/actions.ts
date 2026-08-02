@@ -131,7 +131,10 @@ export async function requestMaterialUpload(input: {
   // 3. mint. The key is opaque and carries no session/class/filename.
   const objectKey = generateObjectKey();
   try {
-    const { signedUrl, token } = await createSignedUploadUrl(objectKey);
+    const { signedUrl, token } = await createSignedUploadUrl(
+      MATERIALS_BUCKET,
+      objectKey,
+    );
     return { ok: true, objectKey, signedUrl, token };
   } catch (e) {
     return {
@@ -173,11 +176,11 @@ export async function confirmMaterialUpload(input: {
   if (!owned) return { error: "Not authorized" };
 
   // 3. verify the real object, and refuse anything that doesn't match policy.
-  const stat = await statObject(parsed.data.objectKey);
+  const stat = await statObject(MATERIALS_BUCKET, parsed.data.objectKey);
   if (!stat) return { error: "The upload didn't complete. Please try again." };
 
   if (stat.sizeBytes > MAX_FILE_BYTES || !isAllowedMimeType(stat.mimeType)) {
-    await removeObject(parsed.data.objectKey);
+    await removeObject(MATERIALS_BUCKET, parsed.data.objectKey);
     return { error: "That file isn't allowed." };
   }
 

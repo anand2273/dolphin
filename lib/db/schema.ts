@@ -95,6 +95,22 @@ export const feedbackAuthorType = pgEnum("feedback_author_type", [
   "agent",
 ]);
 
+/**
+ * Tracks the async worker's progress mining topics/concepts out of an uploaded
+ * syllabus document. Distinct from `extractionStatus` above — that one tracks
+ * OCR-style text extraction on an attachment; this one tracks a structured
+ * topic/concept extraction pipeline that writes rows, not just text. `none` is
+ * the steady state for a manually-created or preset-cloned syllabus that never
+ * had a document uploaded.
+ */
+export const syllabusExtractionStatus = pgEnum("syllabus_extraction_status", [
+  "none",
+  "pending",
+  "processing",
+  "done",
+  "failed",
+]);
+
 /* -------------------------------------------------------------------------- */
 /* profiles — one row per Supabase auth user                                   */
 /* -------------------------------------------------------------------------- */
@@ -420,24 +436,69 @@ export const feedback = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
-/* topics + assignment_topics — the highest-value AI hook. Tutor-tagged.        */
+/* syllabuses — a tutor-owned, optional curriculum. Independent of any class.   */
+/* Populated by LLM extraction from an uploaded document, by hand, or cloned    */
+/* from a backend-authored preset (presets themselves are static code fixtures, */
+/* not rows — see lib/syllabus-presets).                                        */
+/* -------------------------------------------------------------------------- */
+
+export const syllabuses = pgTable(
+  "syllabuses",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tutorId: uuid("tutor_id")
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    subject: text("subject"), // free text, mirrors classes.subject
+    level: text("level"), // e.g. "IGCSE", "A Level" — free text
+    description: text("description"),
+    // The uploaded document this was extracted from. Null for manually-created
+    // or preset-cloned syllabuses.
+    sourceAttachmentId: uuid("source_attachment_id").references(
+      () => attachments.id,
+      { onDelete: "restrict" },
+    ),
+    // Provenance only, never a live reference: which static preset fixture this
+    // was cloned from, if any. Editing the clone never touches the fixture.
+    presetKey: text("preset_key"),
+    extractionStatus: syllabusExtractionStatus("extraction_status")
+      .notNull()
+      .default("none"),
+    extractionError: text("extraction_error"),
+    ...timestamps,
+    ...softDelete,
+  },
+  (t) => [index("syllabuses_tutor_id_idx").on(t.tutorId)],
+);
+
+/* -------------------------------------------------------------------------- */
+/* topics — syllabus-scoped. The highest-value AI hook, now given real shape.   */
+/* Every topic belongs to exactly one syllabus; assignment tagging (not built   */
+/* yet) will pick from the topics of the syllabus a class follows.             */
 /* -------------------------------------------------------------------------- */
 
 export const topics = pgTable(
   "topics",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    // Topics are owned/curated per tutor.
+    syllabusId: uuid("syllabus_id")
+      .notNull()
+      .references(() => syllabuses.id, { onDelete: "cascade" }),
+    // Denormalized from the syllabus so ownership checks don't need a join.
     tutorId: uuid("tutor_id")
       .notNull()
       .references(() => profiles.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    description: text("description"),
+    orderIndex: integer("order_index"),
     ...timestamps,
     ...softDelete,
   },
   (t) => [
-    uniqueIndex("topics_tutor_name_live_uidx")
-      .on(t.tutorId, sql`lower(${t.name})`)
+    index("topics_syllabus_id_idx").on(t.syllabusId),
+    uniqueIndex("topics_syllabus_name_live_uidx")
+      .on(t.syllabusId, sql`lower(${t.name})`)
       .where(sql`${t.deletedAt} is null`),
   ],
 );
@@ -453,6 +514,43 @@ export const assignmentTopics = pgTable(
       .references(() => topics.id, { onDelete: "cascade" }),
   },
   (t) => [primaryKey({ columns: [t.assignmentId, t.topicId] })],
+);
+
+/* -------------------------------------------------------------------------- */
+/* concepts — tutor-owned vocabulary. Referenced by topics; not tied to one     */
+/* topic or one syllabus — the same concept can stretch across both.           */
+/* -------------------------------------------------------------------------- */
+
+export const concepts = pgTable(
+  "concepts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tutorId: uuid("tutor_id")
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    ...timestamps,
+    ...softDelete,
+  },
+  (t) => [
+    uniqueIndex("concepts_tutor_name_live_uidx")
+      .on(t.tutorId, sql`lower(${t.name})`)
+      .where(sql`${t.deletedAt} is null`),
+  ],
+);
+
+export const topicConcepts = pgTable(
+  "topic_concepts",
+  {
+    topicId: uuid("topic_id")
+      .notNull()
+      .references(() => topics.id, { onDelete: "cascade" }),
+    conceptId: uuid("concept_id")
+      .notNull()
+      .references(() => concepts.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.topicId, t.conceptId] })],
 );
 
 /* -------------------------------------------------------------------------- */
