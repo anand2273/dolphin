@@ -295,13 +295,17 @@ precedent for adding AI tooling elsewhere without asking again):
 - `pdf-lib` — only ever imported from `worker/pdf-chunk.ts`, used to slice an
   uploaded PDF into page-range sub-documents for structural chunking (see
   Syllabus extraction above)
-- The `worker/` process itself needs an always-on host outside Vercel, and
-  Redis needs its own instance. **Both live in one Railway project** — see
-  [`docs/deploy.md`](docs/deploy.md) §9. Two consequences that look like bugs
-  if you don't know them: `tsx` is in `dependencies`, not `devDependencies`,
+- The `worker/` process runs on **Railway**; Redis is **Upstash** (`rediss://`,
+  TLS — the Vercel→Redis leg crosses the public internet, and queue-write is an
+  authorization boundary because the worker trusts the ids in a job payload).
+  See [`docs/deploy.md`](docs/deploy.md) §9. Two things that look like bugs if
+  you don't know them: `tsx` is in `dependencies`, not `devDependencies`,
   because `worker:start` *is* `tsx worker/index.ts` and production installs
-  skip devDeps; and both ioredis connections pass `family: 0` because
-  Railway's private network is IPv6-only. Neither is tidy-away-able.
+  skip devDeps; and **the producer and worker connections are deliberately not
+  symmetric** — `maxRetriesPerRequest: null` is required for the worker's
+  blocking connection but caused a hung upload modal on the producer (ioredis
+  retries forever, so `queue.add()` never settles). The producer fails fast
+  instead; do not "tidy" the two back into agreement.
 
 ## Commands
 

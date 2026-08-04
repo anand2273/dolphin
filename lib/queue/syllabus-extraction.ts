@@ -29,13 +29,19 @@ function getQueue(): Queue<SyllabusExtractionJob> {
       "REDIS_URL is not set — required to enqueue syllabus extraction jobs.",
     );
   }
-  // Same two non-negotiable options as the consumer side; see worker/index.ts
-  // and deploy.md §9a. Vercel reaches Redis over the public proxy rather than
-  // Railway's private network, so `family: 0` is inert here — it is set anyway
-  // so the two connections can't drift apart.
+  // These options are deliberately NOT the worker's. `maxRetriesPerRequest:
+  // null` is required for BullMQ's *blocking* connections only (bullmq's
+  // RedisConnection enforces it under `extraOptions.blocking`) — a Queue
+  // producer is non-blocking. Setting null here was a real outage: with an
+  // unreachable Redis, ioredis parks the command and reconnects forever, so
+  // `queue.add()` never resolves or rejects, `confirmSyllabusDocumentUpload`
+  // never returns, and the user watches an upload spinner until Vercel's
+  // function timeout. Fail fast instead, so a bad REDIS_URL surfaces as an
+  // error the action can return. See deploy.md §9d.
   connection = new IORedis(redisUrl, {
-    maxRetriesPerRequest: null,
-    family: 0,
+    maxRetriesPerRequest: 3,
+    enableOfflineQueue: false,
+    connectTimeout: 5_000,
   });
   queue = new Queue<SyllabusExtractionJob>(SYLLABUS_EXTRACTION_QUEUE, {
     connection,
