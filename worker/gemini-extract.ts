@@ -150,6 +150,18 @@ export async function extractTopicsAndConcepts(input: {
       "describe what lies OUTSIDE the syllabus, so never create a topic or " +
       "concept from them, however clearly they are named. " +
 
+      // The notation appendix is the single biggest source of junk on a
+      // Cambridge-style syllabus: a symbol reference table whose section
+      // headings ("Miscellaneous Symbols", "Operations", "Matrices") are
+      // indistinguishable from real topic headings to a chunk that cannot see
+      // it sits in an appendix. Measured on the H2 Math 9758 syllabus, pages
+      // 17-21 contributed 8 spurious topics out of 27.
+      "Ignore reference material that lists notation rather than teaching " +
+      "content: sections of mathematical or scientific notation, symbol " +
+      "tables, glossaries, formula sheets, and lists of abbreviations. Their " +
+      "headings look like topic headings but they define symbols, so never " +
+      "create a topic or concept from them. " +
+
       "Do not promote concepts into separate topics. Do not create topics or concepts " +
       "that are not supported by the document. When the document's hierarchy is " +
       "ambiguous, prefer the most literal interpretation of its headings. " +
@@ -175,7 +187,9 @@ export async function extractTopicsAndConcepts(input: {
         "best guess. The same applies if this excerpt consists only of assumed " +
         "or prerequisite knowledge, or of content marked as excluded — an " +
         "excerpt can be entirely such material, and the correct answer is then " +
-        "an empty topics array, not the topics it names."
+        "an empty topics array, not the topics it names. The same applies to " +
+        "an excerpt that is only a notation or symbol reference table, a " +
+        "glossary, or a formula sheet."
       : "";
 
   const base64 = Buffer.from(input.fileBytes).toString("base64");
