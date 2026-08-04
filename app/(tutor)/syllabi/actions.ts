@@ -317,7 +317,28 @@ export async function confirmSyllabusDocumentUpload(input: {
   // Enqueue only after the transaction has committed — otherwise the worker
   // could pick up the job before the row is visible, or chase a syllabus that
   // never ends up existing if something above rolled back.
-  await enqueueSyllabusExtraction({ syllabusId, attachmentId });
+  //
+  // A failure here must not throw: the document is uploaded and the syllabus
+  // row exists, so the work is not lost — only the *queueing* failed. Throwing
+  // rejects the action, which leaves the upload dialog stuck on "saving" with
+  // no message (the client cannot distinguish a rejection from a pending
+  // promise). Record it as a failed extraction instead so the syllabus page
+  // shows the real reason and `retrySyllabusExtraction` can re-enqueue it once
+  // REDIS_URL is fixed.
+  try {
+    await enqueueSyllabusExtraction({ syllabusId, attachmentId });
+  } catch (e) {
+    await db
+      .update(syllabuses)
+      .set({
+        extractionStatus: "failed",
+        extractionError: `Could not queue extraction: ${
+          e instanceof Error ? e.message : "unknown error"
+        }`,
+        updatedAt: new Date(),
+      })
+      .where(eq(syllabuses.id, syllabusId));
+  }
 
   revalidatePath("/syllabi");
   revalidatePath(`/syllabi/${syllabusId}`);

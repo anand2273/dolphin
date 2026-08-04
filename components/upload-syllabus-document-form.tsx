@@ -112,13 +112,26 @@ export function UploadSyllabusDocumentForm() {
     }
 
     setPhase("saving");
-    const saved = await confirmSyllabusDocumentUpload({
-      objectKey: ticket.objectKey,
-      filename: file.name,
-      title,
-      subject: subject || undefined,
-      level: level || undefined,
-    });
+    // Catch, not just check `.error`: a Server Action that *throws* rejects
+    // this promise, and without a catch the function exits before
+    // setPhase("idle") — leaving the dialog spinning on "saving" with nothing
+    // to explain it. Actions here return typed results, so a rejection means
+    // something unmodelled (a redeploy mid-request, a timeout), which the user
+    // still needs to see.
+    let saved;
+    try {
+      saved = await confirmSyllabusDocumentUpload({
+        objectKey: ticket.objectKey,
+        filename: file.name,
+        title,
+        subject: subject || undefined,
+        level: level || undefined,
+      });
+    } catch {
+      setError("Couldn't save the upload. Please try again.");
+      setPhase("idle");
+      return;
+    }
     if (saved.error) {
       setError(saved.error);
       setPhase("idle");

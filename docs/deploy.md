@@ -378,18 +378,25 @@ syllabus document at `/syllabi`.
 Reading a failure — work down the pipeline, because each symptom isolates a
 different leg:
 
-- **The upload modal spins forever and never closes.** The bytes reached the
-  bucket and the `syllabuses` row committed, but the enqueue is hanging: the
-  producer cannot reach Redis. *This used to be invisible.* The producer once
-  shared the worker's `maxRetriesPerRequest: null`, which tells ioredis never
-  to give up on a command — so with an unreachable Redis, `queue.add()` never
-  resolved *or* rejected, `confirmSyllabusDocumentUpload` never returned, and
-  the user watched a spinner until Vercel's function timeout. The producer now
-  uses `enableOfflineQueue: false` + a 5s connect timeout so it fails fast and
-  the action returns a real error. `null` is required for the *worker's*
-  blocking connection only.
-  Cause is almost always Vercel's `REDIS_URL`: `redis://` instead of
-  `rediss://`, or the REST URL pasted instead of the TCP one.
+- **The syllabus appears with a `failed` pill reading "Could not queue
+  extraction: …".** The bytes reached the bucket and the row committed; only
+  the enqueue failed, so nothing is lost — fix `REDIS_URL` and hit retry. The
+  message after the colon is the real ioredis error and names the cause.
+  Almost always Vercel's `REDIS_URL`: `redis://` instead of `rediss://`, the
+  REST URL pasted instead of the TCP one, or the variable added without
+  redeploying (Vercel applies env changes to *new* deployments only).
+
+  > **This used to present as an upload modal that spun forever with no
+  > message**, which is worth understanding because it hid two separate bugs.
+  > The producer originally shared the worker's `maxRetriesPerRequest: null`,
+  > which tells ioredis never to give up on a command — so an unreachable Redis
+  > meant `queue.add()` never resolved *or* rejected. Fixing that with
+  > `enableOfflineQueue: false` only converted the hang into a rejection, and
+  > the action was throwing out of an unguarded `await` while the form awaited
+  > it without a `catch` — so the dialog still hung, now on a rejected promise.
+  > Both ends are fixed: the actions record the failure on the row and return
+  > normally, and the form catches rejections. `maxRetriesPerRequest: null` is
+  > required for the *worker's* blocking connection only.
 - **Nothing at all in Redis** (`LLEN bull:syllabus-extraction:wait` is 0, or
   Upstash's usage graph is flat) — confirms the producer, not the worker. Same
   cause as above.

@@ -106,10 +106,25 @@ export async function retrySyllabusExtraction(syllabusId: string): Promise<void>
     .set({ extractionStatus: "pending", extractionError: null, updatedAt: new Date() })
     .where(eq(syllabuses.id, syllabusId));
 
-  await enqueueSyllabusExtraction({
-    syllabusId,
-    attachmentId: syllabus.sourceAttachmentId,
-  });
+  // Same reasoning as confirmSyllabusDocumentUpload: a queue outage must land
+  // back on the row as a readable error, not throw out of the action.
+  try {
+    await enqueueSyllabusExtraction({
+      syllabusId,
+      attachmentId: syllabus.sourceAttachmentId,
+    });
+  } catch (e) {
+    await db
+      .update(syllabuses)
+      .set({
+        extractionStatus: "failed",
+        extractionError: `Could not queue extraction: ${
+          e instanceof Error ? e.message : "unknown error"
+        }`,
+        updatedAt: new Date(),
+      })
+      .where(eq(syllabuses.id, syllabusId));
+  }
 
   revalidatePath(`/syllabi/${syllabusId}`);
 }
