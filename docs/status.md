@@ -247,23 +247,31 @@ locally only (see known gaps below).
 
 ### Extraction worker — open findings (review, 2026-08-04)
 
-A code review of `worker/` found the following, none yet fixed. Ordered by
-severity. (Two related issues found the same day were already fixed: the
-concept lookup in `conceptIdFor` is now case-insensitive to match
-`concepts_tutor_name_live_uidx`, and the syllabus page no longer renders the
-raw `extraction_error` DB text to tutors.)
+A code review of `worker/` found the following. Ordered by severity. Findings
+1 and 2 are now fixed; 3–9 are open. (Two related issues found the same day
+were fixed before the review: the concept lookup in `conceptIdFor` is now
+case-insensitive to match `concepts_tutor_name_live_uidx`, and the syllabus
+page no longer renders the raw `extraction_error` DB text to tutors.)
 
-1. **Model string contradicts its own comment and CLAUDE.md.**
-   `worker/gemini-extract.ts` uses `model: "gemini-flash-latest"` while the
-   adjacent comment and CLAUDE.md's model-gotchas section both say the **lite**
-   tier (`gemini-flash-lite-latest`) was chosen deliberately — the bare flash
-   `-latest` alias is the one observed resolving to a thinking model that
-   leaked reasoning into JSON output. Either the string or the documentation
-   is wrong; as written the documented failure mode could silently recur.
-2. **Re-running extraction duplicates every topic.** `retrySyllabusExtraction`
-   only checks ownership + source document, not current status, and the worker
-   only ever inserts topics — it never clears a syllabus's existing ones. A
-   retry after a `done` run writes a complete second copy of every topic.
+1. ~~**Model string contradicts its own comment and CLAUDE.md.**~~ **Resolved
+   2026-08-04 by keeping `gemini-flash-latest` and correcting the docs**, not
+   by reverting to the lite tier. `git log` showed the switch away from
+   `gemini-flash-lite-latest` was deliberate (commit `fd20abb`), made while
+   fighting vague topics, and `gemini-flash-latest` is what the H2 Math
+   extraction was validated against — reverting would have traded away that
+   quality win. CLAUDE.md's model-gotchas section records the reversal.
+2. ~~**Re-running extraction duplicates every topic.**~~ **Fixed 2026-08-04 —
+   and the original diagnosis was wrong.** It never duplicated: `topics` has a
+   live-rows-only unique index on `(syllabus_id, lower(name))`
+   (`topics_syllabus_name_live_uidx`), so the second insert violated that
+   index, rolled the transaction back and failed the job. So the real symptom
+   was a *retry that always fails* once a syllabus already has topics, not
+   data corruption. The worker now looks each topic up case-insensitively and
+   updates in place, inserting only when absent. Deliberately non-destructive:
+   nothing is deleted, so topics a tutor created by hand survive a
+   re-extraction rather than being wiped by a clear-and-rewrite. (This also
+   makes `retrySyllabusExtraction` safe from any status, so it needs no
+   status guard of its own.)
 3. **Concept-creation race between concurrent jobs.** The worker runs
    `concurrency: 2`; two jobs for the same tutor can both miss the
    select-then-insert in `conceptIdFor` and collide on
@@ -291,8 +299,7 @@ raw `extraction_error` DB text to tutors.)
    guard.
 
 Minor: topic/concept inserts are sequential N+1 awaits inside the transaction
-(batchable); nothing checks `usageMetadata.thoughtsTokenCount` even though
-CLAUDE.md documents it as the leaked-thinking signature worth asserting on.
+(batchable).
 
 ## Deployment
 
@@ -342,7 +349,9 @@ Ordered by how much they matter.
    working end-to-end locally (`pnpm worker:dev` + `pnpm redis:start` +
    a real `GEMINI_API_KEY` in `.env.local`), but there's no Railway (or
    equivalent) service, no production Redis, and no `GEMINI_API_KEY` in any
-   deployed environment yet.
+   deployed environment yet. The runbook for doing it is written up as
+   [`deploy.md`](deploy.md) §9 (Upstash + a background-worker host), including
+   the `REDIS_URL` the Next app needs as the queue's producer.
 9. **No Syllabi tab UI.** The backend (schema, actions, worker) is done and
    tested via `scripts/test-syllabus-pipeline.ts`; a tutor cannot reach any of
    it without that script or a direct Server Action call today.

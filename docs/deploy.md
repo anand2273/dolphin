@@ -4,7 +4,9 @@ Target: existing Supabase cloud project + existing Vercel project, running on th
 `*.vercel.app` URL, with Resend for transactional email.
 
 Work top to bottom. Steps 4 and 5 are the ones that silently half-work if skipped
-— the app will look fine and invitations will quietly break.
+— the app will look fine and invitations will quietly break. Step 9 (Redis and
+the extraction worker) is additive and optional: steps 1–8 give you a fully
+working app without it.
 
 Throughout, `PROJECT_REF` is your Supabase project ref (the subdomain in
 `https://<ref>.supabase.co`) and `APP_URL` is your production URL —
@@ -177,6 +179,16 @@ Project → Settings → Environment Variables. Set for Production **and** Previ
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon key | public |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key | **secret — never `NEXT_PUBLIC_`** |
 | `DATABASE_URL` | pooled URI, see below | secret |
+| `REDIS_URL` | Upstash `rediss://…` URI | secret; only needed once step 9 is done |
+
+`REDIS_URL` is required here because the Next app is the **producer** side of the
+extraction queue (`lib/queue/syllabus-extraction.ts`). Without it, uploading a
+syllabus document throws "REDIS_URL is not set" at enqueue time even if the
+worker itself is running perfectly. It is the same value the worker uses — see
+step 9.
+
+`GEMINI_API_KEY` deliberately does **not** belong here. Only the worker calls
+Gemini; putting the key in Vercel's env widens its blast radius for nothing.
 
 `DATABASE_URL` must be the **transaction pooler** (port 6543), not the direct
 connection — serverless functions open far too many connections otherwise:
@@ -215,6 +227,126 @@ failed at least once during development:
 - [ ] Signed out, `APP_URL/api/materials/<id>/download` returns 401
 - [ ] Signed in as a *different* tutor, the same URL returns 404
 
+## 9. Redis and the syllabus-extraction worker
+
+Additive: steps 1–8 give you a fully working app. This stage only turns on
+syllabus extraction. Everything else keeps working if you skip it — but a
+tutor who uploads a syllabus document will see it sit at `pending` forever,
+so don't ship the Syllabi UI without it.
+
+Two new hosts, because Vercel cannot run a persistent queue consumer:
+**Upstash** for Redis, and a **background worker** host for `worker/`
+(Render, Railway or Fly — all fine; the notes below use Render).
+
+### 9a. Upstash Redis
+
+Create the database, then take the **TCP/Redis-protocol** URI — the
+`rediss://default:PASSWORD@HOST:6379` one. **Not** the REST URL
+(`UPSTASH_REDIS_REST_URL`): BullMQ speaks the real Redis protocol through
+ioredis and cannot use the REST endpoint at all. The double-s in `rediss://`
+is TLS, which Upstash requires; ioredis infers it from the scheme.
+
+- **Disable eviction on the database.** BullMQ requires a `noeviction` policy.
+  If Upstash may evict keys under memory pressure, queued jobs vanish with no
+  error anywhere — the syllabus just stays `pending` forever. This is the
+  nastiest failure here precisely because it looks like nothing happened.
+- **Put it in the same region** as the Supabase project and the worker host.
+  Every BullMQ operation is a round trip.
+- `maxRetriesPerRequest: null` is BullMQ's other hard requirement and is
+  already set on both sides (`worker/index.ts`,
+  `lib/queue/syllabus-extraction.ts`). It looks like a redundant option. It
+  is not — do not "tidy" it away.
+
+Upstash bills per command, and an idle BullMQ worker still issues blocking
+poll commands continuously. At one worker this should be negligible; check
+the usage graph after a few days rather than assuming idle means free.
+
+### 9b. The worker service (Render)
+
+Create it as a **Background Worker**, *not* a Web Service. A Web Service is
+health-checked for an open port and `worker/index.ts` never listens on one,
+so Render would kill it in a restart loop. Note that Render's Background
+Workers are a paid service type — Railway and Fly host the same shape if
+that's a blocker.
+
+| Setting | Value |
+|---|---|
+| Build command | `pnpm install` |
+| Start command | `pnpm worker:start` |
+
+**The trap: `tsx` is a devDependency, but `worker:start` *is* `tsx
+worker/index.ts`.** Render sets `NODE_ENV=production`, pnpm then skips
+devDependencies, and the service dies with `tsx: not found`. Fix with
+`NPM_CONFIG_PRODUCTION=false` in the env, or a build command of
+`pnpm install --prod=false`. Promoting `tsx` to `dependencies` also works and
+is arguably the most honest, since it genuinely is a runtime dependency for
+this process.
+
+### 9c. Worker environment variables
+
+| Name | Value | Notes |
+|---|---|---|
+| `REDIS_URL` | Upstash `rediss://…` | same value as Vercel's |
+| `DATABASE_URL` | **session pooler (5432)** | see below — not Vercel's value |
+| `GEMINI_API_KEY` | paid-tier Gemini key | worker only; never on Vercel |
+| `SUPABASE_SERVICE_ROLE_KEY` | service role key | mints the signed download URL |
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://PROJECT_REF.supabase.co` | yes, really — see below |
+
+Two of those are counter-intuitive:
+
+- `NEXT_PUBLIC_SUPABASE_URL` looks Next-only, but `lib/auth/supabase-admin.ts`
+  reads it and the worker reaches that code through `createSignedDownloadUrl`
+  when it fetches the uploaded document. It has to be set on a host that has
+  nothing to do with Next.
+- `DATABASE_URL` must **not** be the transaction pooler (6543) that step 7
+  specifies for Vercel. That advice exists because serverless functions open
+  many short-lived connections. The worker is the opposite: one long-lived
+  process at `concurrency: 2` running multi-statement transactions. Use the
+  session pooler or the direct connection on **5432**.
+
+### 9d. Verify
+
+Deploy the worker first and watch its log for:
+
+```
+[syllabus-extraction] worker started, waiting for jobs
+```
+
+That line alone proves `REDIS_URL`, TLS and Upstash auth are all good. Then
+add `REDIS_URL` to Vercel (step 7), redeploy, and upload a syllabus document
+through the UI.
+
+- [ ] The status pill moves `pending` → `processing` → `done`
+- [ ] Topics and concepts appear on the syllabus page
+- [ ] The worker log shows `done — syllabus <id>`
+
+Reading a failure:
+
+- **Stuck on `pending`** — the job never reached the worker. Either the two
+  hosts disagree about `REDIS_URL`, or eviction is on and dropped it (9a).
+- **`processing` → `failed`** — the worker got it and something inside blew
+  up. The UI deliberately shows only a friendly message now, so read the real
+  error from `syllabuses.extraction_error` in the database.
+
+### 9e. Know before you ship
+
+The two findings that previously blocked this — a retry that failed once a
+syllabus already had topics, and the ambiguous model pin — were fixed on
+2026-08-04. Re-extraction is now idempotent, and the model choice is settled
+and guarded. Neither should hold up a deploy.
+
+What remains open (full list in [`status.md`](status.md)) and is worth knowing
+when reading production incidents:
+
+- **Concurrent jobs for the same tutor can still collide on concept
+  creation**, failing one of the two jobs with a 23505. The worker runs
+  `concurrency: 2`, so this needs two extractions running at once for the
+  same tutor. BullMQ retries it, and the retry usually succeeds because the
+  concept now exists.
+- **One failed chunk discards the whole document's results**, so a single
+  transient Gemini error re-pays for every chunk on retry. Watch cost if you
+  see repeated failures on large PDFs.
+
 ---
 
 ## Known gaps to close before real users
@@ -228,3 +360,8 @@ failed at least once during development:
 2. **No backups configured.** Student work is not recoverable.
 3. **Storage objects are never reclaimed.** Deleting a material soft-deletes the
    row and deliberately leaves the object. There is no cleanup job yet.
+4. **The extraction worker isn't deployed yet.** Step 9 is written but has not
+   been carried out — there is no Upstash database, no worker service and no
+   `REDIS_URL` in Vercel today. Verified working locally only. The worker also
+   carries known open bugs; see the review findings in [`status.md`](status.md)
+   before putting it in front of real users.

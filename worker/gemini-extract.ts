@@ -103,10 +103,9 @@ export async function extractTopicsAndConcepts(input: {
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
-    // Deliberately NOT a "-latest" alias pointing at a "thinking" model — one
-    // was observed leaking its internal reasoning into output fields, breaking
-    // the JSON. "flash-lite" is the non-thinking tier, which is what a
-    // structured-extraction task like this wants.
+    // Was "gemini-flash-lite-latest" until the chunking work (fd20abb): lite
+    // gave topics too vague to be useful even one chunk at a time. This tier
+    // is what the H2 Math extraction was validated against.
     model: "gemini-flash-latest",
     generationConfig: {
       responseMimeType: "application/json",

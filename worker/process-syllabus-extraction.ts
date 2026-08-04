@@ -165,23 +165,61 @@ export async function processSyllabusExtraction(
         return created.id;
       }
 
+      // Re-extraction (a retry, or a second document on the same syllabus) has
+      // to be idempotent. topics_syllabus_name_live_uidx is a live-rows-only
+      // unique index on (syllabus_id, lower(name)), so a blind insert of an
+      // already-present topic aborts the whole transaction and fails the job.
+      // Matching that index and updating in place is also what spares a
+      // tutor's hand-created topics: nothing here deletes rows, so a topic the
+      // extraction no longer mentions simply survives untouched.
       for (const [index, extractedTopic] of result.topics.entries()) {
-        const [topicRow] = await tx
-          .insert(topics)
-          .values({
-            syllabusId,
-            tutorId: syllabus.tutorId,
-            name: extractedTopic.name,
-            description: extractedTopic.description ?? null,
-            orderIndex: index,
-          })
-          .returning({ id: topics.id });
+        const topicKey = extractedTopic.name.toLowerCase();
+        const [existingTopic] = await tx
+          .select({ id: topics.id })
+          .from(topics)
+          .where(
+            and(
+              eq(topics.syllabusId, syllabusId),
+              sql`lower(${topics.name}) = ${topicKey}`,
+              isNull(topics.deletedAt),
+            ),
+          )
+          .limit(1);
+
+        let topicId: string;
+        if (existingTopic) {
+          topicId = existingTopic.id;
+          await tx
+            .update(topics)
+            .set({
+              // Only overwrite a description when this run actually produced
+              // one — never blank out one the tutor wrote by hand.
+              ...(extractedTopic.description
+                ? { description: extractedTopic.description }
+                : {}),
+              orderIndex: index,
+              updatedAt: new Date(),
+            })
+            .where(eq(topics.id, topicId));
+        } else {
+          const [created] = await tx
+            .insert(topics)
+            .values({
+              syllabusId,
+              tutorId: syllabus.tutorId,
+              name: extractedTopic.name,
+              description: extractedTopic.description ?? null,
+              orderIndex: index,
+            })
+            .returning({ id: topics.id });
+          topicId = created.id;
+        }
 
         for (const extractedConcept of extractedTopic.concepts ?? []) {
           const conceptId = await conceptIdFor(extractedConcept.name);
           await tx
             .insert(topicConcepts)
-            .values({ topicId: topicRow.id, conceptId })
+            .values({ topicId, conceptId })
             .onConflictDoNothing();
         }
       }

@@ -193,12 +193,12 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
 
 ### Model gotchas — learned by breaking it, do not pick a model by guessing
 
-- **Use `gemini-flash-lite-latest`**, not a bare `"-latest"` alias. That alias
-  was observed resolving to a *thinking* model that leaked its internal
-  reasoning straight into JSON output fields (visible via a nonzero
-  `thoughtsTokenCount` in `usageMetadata`), corrupting the extraction. The
-  "lite" tier is the non-thinking one, which is what a structured-extraction
-  task wants.
+- **We now use `gemini-flash-latest`, not the lite tier** — *reversed 2026-08-04,
+  alongside the chunking work.* The original rule here was to pin
+  `gemini-flash-lite-latest`. That was dropped because lite produced topics too
+  vague to be usable even chunk-by-chunk; `gemini-flash-latest` is the tier the
+  H2 Math extraction was actually validated against. Re-check output quality
+  against a real syllabus before changing this again.
 - **Dated model names are actively being sunset.** `gemini-2.5-flash` and
   `gemini-2.0-flash` both now 404 on `generateContent` ("no longer available"),
   despite still appearing in `ListModels`. Don't pin a dated version; the
