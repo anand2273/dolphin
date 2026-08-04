@@ -350,8 +350,10 @@ Ordered by how much they matter.
    a real `GEMINI_API_KEY` in `.env.local`), but there's no Railway (or
    equivalent) service, no production Redis, and no `GEMINI_API_KEY` in any
    deployed environment yet. The runbook for doing it is written up as
-   [`deploy.md`](deploy.md) §9 (Upstash + a background-worker host), including
-   the `REDIS_URL` the Next app needs as the queue's producer.
+   [`deploy.md`](deploy.md) §9 (one Railway project holding both Redis and the
+   worker), including the `REDIS_URL` the Next app needs as the queue's
+   producer — which is Railway's *public* proxy URL, not the private one the
+   worker uses.
 9. **No Syllabi tab UI.** The backend (schema, actions, worker) is done and
    tested via `scripts/test-syllabus-pipeline.ts`; a tutor cannot reach any of
    it without that script or a direct Server Action call today.

@@ -179,13 +179,17 @@ Project → Settings → Environment Variables. Set for Production **and** Previ
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon key | public |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key | **secret — never `NEXT_PUBLIC_`** |
 | `DATABASE_URL` | pooled URI, see below | secret |
-| `REDIS_URL` | Upstash `rediss://…` URI | secret; only needed once step 9 is done |
+| `REDIS_URL` | Railway's **public** `redis://…proxy.rlwy.net:PORT` | secret; only needed once step 9 is done |
 
 `REDIS_URL` is required here because the Next app is the **producer** side of the
 extraction queue (`lib/queue/syllabus-extraction.ts`). Without it, uploading a
 syllabus document throws "REDIS_URL is not set" at enqueue time even if the
-worker itself is running perfectly. It is the same value the worker uses — see
-step 9.
+worker itself is running perfectly.
+
+It points at the **same database** the worker uses but not via the same
+address: Vercel is outside Railway's private network, so it takes the public
+TCP proxy URL while the worker takes the private one. See step 9a — this
+asymmetry is the easiest thing in step 9 to get wrong.
 
 `GEMINI_API_KEY` deliberately does **not** belong here. Only the worker calls
 Gemini; putting the key in Vercel's env widens its blast radius for nothing.
@@ -234,66 +238,111 @@ syllabus extraction. Everything else keeps working if you skip it — but a
 tutor who uploads a syllabus document will see it sit at `pending` forever,
 so don't ship the Syllabi UI without it.
 
-Two new hosts, because Vercel cannot run a persistent queue consumer:
-**Upstash** for Redis, and a **background worker** host for `worker/`
-(Render, Railway or Fly — all fine; the notes below use Render).
+One new host, because Vercel cannot run a persistent queue consumer:
+a **single Railway project** holding two services — a Redis database and the
+`worker/` process. Keeping both in one project is the point: they talk over
+Railway's private network, so every BullMQ round trip stays inside the
+datacentre and Redis is billed as compute rather than per command.
 
-### 9a. Upstash Redis
+> Render, Fly and Upstash all host the same shape and the app does not care.
+> The end of this section notes what changes if you split Redis onto Upstash.
 
-Create the database, then take the **TCP/Redis-protocol** URI — the
-`rediss://default:PASSWORD@HOST:6379` one. **Not** the REST URL
-(`UPSTASH_REDIS_REST_URL`): BullMQ speaks the real Redis protocol through
-ioredis and cannot use the REST endpoint at all. The double-s in `rediss://`
-is TLS, which Upstash requires; ioredis infers it from the scheme.
+Rough cost: Railway's Hobby plan is $5/month including $5 of usage credit;
+one idle worker plus a small Redis lands around there.
 
-- **Disable eviction on the database.** BullMQ requires a `noeviction` policy.
-  If Upstash may evict keys under memory pressure, queued jobs vanish with no
-  error anywhere — the syllabus just stays `pending` forever. This is the
-  nastiest failure here precisely because it looks like nothing happened.
-- **Put it in the same region** as the Supabase project and the worker host.
-  Every BullMQ operation is a round trip.
-- `maxRetriesPerRequest: null` is BullMQ's other hard requirement and is
-  already set on both sides (`worker/index.ts`,
-  `lib/queue/syllabus-extraction.ts`). It looks like a redundant option. It
-  is not — do not "tidy" it away.
+### 9a. The Redis service
 
-Upstash bills per command, and an idle BullMQ worker still issues blocking
-poll commands continuously. At one worker this should be negligible; check
-the usage graph after a few days rather than assuming idle means free.
+Railway dashboard → **New Project** → **Deploy Redis**. Nothing to configure;
+the defaults are what BullMQ needs. What matters is which of the two URLs
+Railway hands you goes where:
 
-### 9b. The worker service (Render)
+| Variable | Host | Who uses it |
+|---|---|---|
+| `REDIS_URL` | `redis://default:PASS@<region>.proxy.rlwy.net:PORT` | **Vercel** (step 7) — public TCP proxy |
+| `REDIS_PRIVATE_URL` | `redis://default:PASS@redis.railway.internal:6379` | **the worker** (9c) — private network |
 
-Create it as a **Background Worker**, *not* a Web Service. A Web Service is
-health-checked for an open port and `worker/index.ts` never listens on one,
-so Render would kill it in a restart loop. Note that Render's Background
-Workers are a paid service type — Railway and Fly host the same shape if
-that's a blocker.
+Both address the same database. This asymmetry is deliberate and is the one
+part of this step people get wrong: Vercel is not on Railway's private
+network, so it *must* use the public proxy; the worker *is*, so routing it
+through the public proxy would add latency and billable egress for nothing.
+
+Three things worth knowing:
+
+- **Railway's private network is IPv6-only**, and Node's default DNS lookup
+  will not resolve `redis.railway.internal` without help. Both connections
+  therefore pass `family: 0` to ioredis (`worker/index.ts`,
+  `lib/queue/syllabus-extraction.ts`), which allows an A *or* AAAA answer.
+  Without it the worker dies at boot with `ENOTFOUND redis.railway.internal`.
+  The option is harmless on every other URL form, which is why it is set
+  unconditionally rather than behind a host check.
+- **Neither URL is TLS** — Railway terminates nothing in front of Redis, and
+  the private network is already isolated. `redis://` is correct here; do not
+  "fix" it to `rediss://`, which will fail the handshake. (Upstash is the
+  opposite — see the note at the end of this section.)
+- **Confirm the eviction policy is `noeviction`.** BullMQ requires it, and
+  Railway's Redis image ships with no `maxmemory` set, which means
+  `noeviction` in practice. Verify rather than assume: if keys can be evicted
+  under memory pressure, queued jobs vanish with no error anywhere and the
+  syllabus stays `pending` forever. This is the nastiest failure in the whole
+  step precisely because it looks like nothing happened.
+
+`maxRetriesPerRequest: null` is BullMQ's other hard requirement and is already
+set on both sides. It looks like a redundant option. It is not — do not "tidy"
+it away, and the same goes for `family: 0`.
+
+### 9b. The worker service
+
+In the same project → **New** → **GitHub Repo** → this repo.
 
 | Setting | Value |
 |---|---|
 | Build command | `pnpm install` |
 | Start command | `pnpm worker:start` |
+| Watch paths | `worker/**`, `lib/**`, `package.json` |
 
-**The trap: `tsx` is a devDependency, but `worker:start` *is* `tsx
-worker/index.ts`.** Render sets `NODE_ENV=production`, pnpm then skips
-devDependencies, and the service dies with `tsx: not found`. Fix with
-`NPM_CONFIG_PRODUCTION=false` in the env, or a build command of
-`pnpm install --prod=false`. Promoting `tsx` to `dependencies` also works and
-is arguably the most honest, since it genuinely is a runtime dependency for
-this process.
+Railway has no separate "background worker" service type — it just runs the
+start command and never health-checks for an open port, which is exactly what
+`worker/index.ts` needs. (On Render this is the difference between a
+**Background Worker** and a **Web Service**: pick a Web Service there and the
+port health check restart-loops it forever.)
+
+Set the **watch paths**. Without them every push to the repo — including a
+pure Next.js/UI change — redeploys the worker and interrupts any extraction
+in flight. The worker has no graceful shutdown handler yet (see `status.md`),
+so an interrupted job relies on BullMQ's stalled-job recovery.
+
+**`tsx` now lives in `dependencies`, not `devDependencies`** — deliberately.
+`worker:start` *is* `tsx worker/index.ts`, so on a host that sets
+`NODE_ENV=production` (Railway and Render both do) pnpm skips devDependencies
+and the service dies with `tsx: not found`. It genuinely is a runtime
+dependency for this process. If you ever move it back, the workaround is
+`NPM_CONFIG_PRODUCTION=false` in the env or a build command of
+`pnpm install --prod=false`.
 
 ### 9c. Worker environment variables
 
+On the worker service → **Variables**:
+
 | Name | Value | Notes |
 |---|---|---|
-| `REDIS_URL` | Upstash `rediss://…` | same value as Vercel's |
-| `DATABASE_URL` | **session pooler (5432)** | see below — not Vercel's value |
+| `REDIS_URL` | `${{Redis.REDIS_PRIVATE_URL}}` | **private** URL — not Vercel's value; see below |
+| `DATABASE_URL` | **session pooler (5432)** | see below — also not Vercel's value |
 | `GEMINI_API_KEY` | paid-tier Gemini key | worker only; never on Vercel |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key | mints the signed download URL |
 | `NEXT_PUBLIC_SUPABASE_URL` | `https://PROJECT_REF.supabase.co` | yes, really — see below |
 
-Two of those are counter-intuitive:
+Use Railway's **reference syntax** (`${{Redis.REDIS_PRIVATE_URL}}`) rather than
+pasting the literal string, so a Redis credential rotation propagates on its
+own. Note the variable is named `REDIS_URL` *on the worker* even though it
+points at Railway's `REDIS_PRIVATE_URL` — both `worker/index.ts` and
+`lib/queue/syllabus-extraction.ts` read `REDIS_URL` and neither knows or cares
+which address it holds.
 
+Three of those are counter-intuitive:
+
+- `REDIS_URL` is the *private* URL here and the *public proxy* URL on Vercel
+  (9a). They are different strings pointing at one database. "Both hosts must
+  agree on `REDIS_URL`" means the same database, not the same literal value.
 - `NEXT_PUBLIC_SUPABASE_URL` looks Next-only, but `lib/auth/supabase-admin.ts`
   reads it and the worker reaches that code through `createSignedDownloadUrl`
   when it fetches the uploaded document. It has to be set on a host that has
@@ -312,9 +361,9 @@ Deploy the worker first and watch its log for:
 [syllabus-extraction] worker started, waiting for jobs
 ```
 
-That line alone proves `REDIS_URL`, TLS and Upstash auth are all good. Then
-add `REDIS_URL` to Vercel (step 7), redeploy, and upload a syllabus document
-through the UI.
+That line alone proves the private DNS name resolved, `family: 0` did its job
+and Redis auth is good. Then put the **public proxy** `REDIS_URL` into Vercel
+(step 7), redeploy, and upload a syllabus document through the UI.
 
 - [ ] The status pill moves `pending` → `processing` → `done`
 - [ ] Topics and concepts appear on the syllabus page
@@ -322,11 +371,35 @@ through the UI.
 
 Reading a failure:
 
+- **`ENOTFOUND redis.railway.internal` at worker boot** — the connection lost
+  its `family: 0`, or the worker is not in the same Railway project as the
+  Redis service. Private DNS does not cross projects.
 - **Stuck on `pending`** — the job never reached the worker. Either the two
-  hosts disagree about `REDIS_URL`, or eviction is on and dropped it (9a).
+  hosts are pointed at *different databases* (check that Vercel has the public
+  proxy URL for this project's Redis, not a stale one), or eviction is on and
+  dropped it (9a).
 - **`processing` → `failed`** — the worker got it and something inside blew
   up. The UI deliberately shows only a friendly message now, so read the real
   error from `syllabuses.extraction_error` in the database.
+
+### If you split Redis onto Upstash instead
+
+Everything above holds except 9a. Take Upstash's **TCP/Redis-protocol** URI —
+the `rediss://default:PASSWORD@HOST:6379` one — and use that single value on
+both hosts. **Not** the REST URL (`UPSTASH_REDIS_REST_URL`): BullMQ speaks the
+real Redis protocol through ioredis and cannot use the REST endpoint at all.
+The double-s in `rediss://` is TLS, which Upstash requires and ioredis infers
+from the scheme.
+
+- **Disable eviction explicitly** — Upstash does not default to `noeviction`
+  the way Railway's image does.
+- **Put it in the same region** as the worker host and the Supabase project.
+  Every BullMQ operation is a round trip.
+- Upstash **bills per command**, and an idle BullMQ worker issues blocking
+  poll commands continuously — roughly 3k/day per worker against the free
+  tier's 10k/day. Fine at one worker; check the usage graph after a few days
+  rather than assuming idle means free. This is the main reason the primary
+  path above keeps Redis on Railway.
 
 ### 9e. Know before you ship
 
@@ -361,7 +434,7 @@ when reading production incidents:
 3. **Storage objects are never reclaimed.** Deleting a material soft-deletes the
    row and deliberately leaves the object. There is no cleanup job yet.
 4. **The extraction worker isn't deployed yet.** Step 9 is written but has not
-   been carried out — there is no Upstash database, no worker service and no
+   been carried out — there is no Railway project, no production Redis and no
    `REDIS_URL` in Vercel today. Verified working locally only. The worker also
    carries known open bugs; see the review findings in [`status.md`](status.md)
    before putting it in front of real users.

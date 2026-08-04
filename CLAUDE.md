@@ -295,8 +295,13 @@ precedent for adding AI tooling elsewhere without asking again):
 - `pdf-lib` — only ever imported from `worker/pdf-chunk.ts`, used to slice an
   uploaded PDF into page-range sub-documents for structural chunking (see
   Syllabus extraction above)
-- The `worker/` process itself needs an always-on host outside Vercel (Railway
-  suggested); Redis needs its own instance
+- The `worker/` process itself needs an always-on host outside Vercel, and
+  Redis needs its own instance. **Both live in one Railway project** — see
+  [`docs/deploy.md`](docs/deploy.md) §9. Two consequences that look like bugs
+  if you don't know them: `tsx` is in `dependencies`, not `devDependencies`,
+  because `worker:start` *is* `tsx worker/index.ts` and production installs
+  skip devDeps; and both ioredis connections pass `family: 0` because
+  Railway's private network is IPv6-only. Neither is tidy-away-able.
 
 ## Commands
 

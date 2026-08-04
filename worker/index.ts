@@ -23,7 +23,14 @@ if (!redisUrl) {
   throw new Error("REDIS_URL is not set — the worker cannot consume its queue.");
 }
 
-const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
+// `family: 0` lets DNS return an A *or* AAAA record. Railway's private network
+// is IPv6-only, so `redis.railway.internal` is ENOTFOUND without it; it is a
+// no-op on every other host. Neither option here is tidy-away-able —
+// `maxRetriesPerRequest: null` is a hard BullMQ requirement. See deploy.md §9a.
+const connection = new IORedis(redisUrl, {
+  maxRetriesPerRequest: null,
+  family: 0,
+});
 
 const worker = new Worker<SyllabusExtractionJob>(
   SYLLABUS_EXTRACTION_QUEUE,

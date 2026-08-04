@@ -29,7 +29,14 @@ function getQueue(): Queue<SyllabusExtractionJob> {
       "REDIS_URL is not set — required to enqueue syllabus extraction jobs.",
     );
   }
-  connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
+  // Same two non-negotiable options as the consumer side; see worker/index.ts
+  // and deploy.md §9a. Vercel reaches Redis over the public proxy rather than
+  // Railway's private network, so `family: 0` is inert here — it is set anyway
+  // so the two connections can't drift apart.
+  connection = new IORedis(redisUrl, {
+    maxRetriesPerRequest: null,
+    family: 0,
+  });
   queue = new Queue<SyllabusExtractionJob>(SYLLABUS_EXTRACTION_QUEUE, {
     connection,
   });
