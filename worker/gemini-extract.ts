@@ -131,7 +131,24 @@ export async function extractTopicsAndConcepts(input: {
       "'Vectors' is an appropriate topic, and 'Vector Cross Product' is a concept. " +
       "Similarly, in Organic Chemistry, 'Organic Chemistry' is too broad, " +
       "'Hydroxyl Compounds' is an appropriate topic, and 'Grignard Reaction' is a concept. " +
-      "Similarly, Calculus is too broad: Differentiation Techniques is a topic, Chain rule is a concept" +
+      "Similarly, Calculus is too broad: Differentiation Techniques is a topic, Chain rule is a concept. " +
+
+      // A syllabus routinely names content it does NOT teach: an "Assumed
+      // Knowledge" / "Prerequisites" appendix listing prior learning, and
+      // "excluded content" notes. That material is explicitly and
+      // unambiguously named in the document, so every rule above ("extract
+      // what the document literally states") argues FOR extracting it — which
+      // is exactly how it ends up as a pile of spurious topics. It has to be
+      // ruled out on the grounds of what it MEANS, not how clearly it is
+      // stated. Chunk mode makes this worse, not better: the excerpt holding
+      // the appendix has no way to see that it sits outside the syllabus body.
+      "Extract only content that this syllabus itself teaches and assesses. " +
+      "Ignore any section describing prior, assumed, or prerequisite knowledge " +
+      "(for example one headed 'Assumed Knowledge', 'Prerequisites', 'Prior " +
+      "Learning', or 'Knowledge Assumed'), and any section listing content that " +
+      "is explicitly excluded, not examinable, or out of scope. Those sections " +
+      "describe what lies OUTSIDE the syllabus, so never create a topic or " +
+      "concept from them, however clearly they are named. " +
 
       "Do not promote concepts into separate topics. Do not create topics or concepts " +
       "that are not supported by the document. When the document's hierarchy is " +
@@ -155,7 +172,10 @@ export async function extractTopicsAndConcepts(input: {
         "literal text. If this excerpt contains no clearly stated topic content " +
         "(e.g. it is a cover page, table of contents, administrative text, or " +
         "otherwise inconclusive), return an empty topics array rather than a " +
-        "best guess."
+        "best guess. The same applies if this excerpt consists only of assumed " +
+        "or prerequisite knowledge, or of content marked as excluded — an " +
+        "excerpt can be entirely such material, and the correct answer is then " +
+        "an empty topics array, not the topics it names."
       : "";
 
   const base64 = Buffer.from(input.fileBytes).toString("base64");
