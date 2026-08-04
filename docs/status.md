@@ -4,7 +4,8 @@
 with no code behind them yet — that is deliberate (see the forward-compat hooks
 in [`../CLAUDE.md`](../CLAUDE.md)), not an oversight.
 
-Last updated: Syllabus creation — backend (post-UI-overhaul).
+Last updated: Syllabus creation — backend (post-UI-overhaul); extraction-worker
+review findings recorded 2026-08-04.
 
 ---
 
@@ -217,15 +218,81 @@ UI yet** — this checkpoint is backend-only, by request.
 - `lib/queue/syllabus-extraction.ts` + `worker/` — BullMQ + Redis. The Next app
   only enqueues; a standalone worker process (outside Vercel, which can't host
   one) consumes the queue, calls Gemini, and writes `topics`/`concepts`/
-  `topic_concepts`. See the "Syllabus extraction" section of `../CLAUDE.md`.
+  `topic_concepts`. See the "Syllabus extraction" section of `../CLAUDE.md` —
+  including the model gotchas (deprecated/thinking-model traps and the
+  finishReason/token-cap/schema-description guards that fix them).
+- `worker/pdf-chunk.ts` — PDFs are split into structural (fixed-size, page-based,
+  not semantic) chunks before extraction, one Gemini call per chunk, results
+  merged by case-insensitive topic/concept name. Added because whole-document
+  extraction was producing topics too vague/generic for the granularity wanted;
+  each chunk's prompt is only allowed to name a topic/concept that is
+  literally, explicitly present in that chunk. Non-PDF formats (`.txt`/`.doc`/
+  `.docx`) still go through the original single whole-document call — no
+  chunking story for them yet.
 - `tests/authz.syllabus.test.ts` — 9 tests: rival tutor and student both
   denied at every layer (assert, query, list), soft-delete hides the syllabus
   from its own tutor too.
+- `scripts/test-syllabus-pipeline.ts` — the way to exercise upload → enqueue →
+  worker → Gemini → DB without a UI (seed/`--status`/`--cleanup` modes).
+
+**Verified working end-to-end locally** (2026-08): a real document uploaded
+through the full flow, extracted by Gemini, and landed as correctly-nested
+topics/concepts. Local Redis runs via `pnpm redis:start` (Docker); local
+`.env.local` has a working `GEMINI_API_KEY`.
 
 **Not built**: the Syllabi tab itself, `classes.syllabus_id` (attaching a
 syllabus to a class), and assignment tagging from a syllabus's topics (still
-waiting on CP6). The worker also isn't deployed anywhere yet — it runs locally
-via `pnpm worker:dev` today.
+waiting on CP6). Nothing is deployed anywhere yet — worker and Redis both run
+locally only (see known gaps below).
+
+### Extraction worker — open findings (review, 2026-08-04)
+
+A code review of `worker/` found the following, none yet fixed. Ordered by
+severity. (Two related issues found the same day were already fixed: the
+concept lookup in `conceptIdFor` is now case-insensitive to match
+`concepts_tutor_name_live_uidx`, and the syllabus page no longer renders the
+raw `extraction_error` DB text to tutors.)
+
+1. **Model string contradicts its own comment and CLAUDE.md.**
+   `worker/gemini-extract.ts` uses `model: "gemini-flash-latest"` while the
+   adjacent comment and CLAUDE.md's model-gotchas section both say the **lite**
+   tier (`gemini-flash-lite-latest`) was chosen deliberately — the bare flash
+   `-latest` alias is the one observed resolving to a thinking model that
+   leaked reasoning into JSON output. Either the string or the documentation
+   is wrong; as written the documented failure mode could silently recur.
+2. **Re-running extraction duplicates every topic.** `retrySyllabusExtraction`
+   only checks ownership + source document, not current status, and the worker
+   only ever inserts topics — it never clears a syllabus's existing ones. A
+   retry after a `done` run writes a complete second copy of every topic.
+3. **Concept-creation race between concurrent jobs.** The worker runs
+   `concurrency: 2`; two jobs for the same tutor can both miss the
+   select-then-insert in `conceptIdFor` and collide on
+   `concepts_tutor_name_live_uidx` (23505), failing a whole job. Needs
+   `onConflictDoNothing().returning()` + re-select to be idempotent.
+4. **Prompt concatenation typo** in `worker/gemini-extract.ts`'s `basePrompt`:
+   `"...Chain rule is a concept" + "Do not promote..."` — no space/period, so
+   the model receives `a conceptDo not promote`.
+5. **One failed chunk wastes all the others.** `Promise.all` fails fast, so a
+   single chunk failure discards every successful chunk result and the BullMQ
+   retry re-pays for all the Gemini calls. `Promise.allSettled` + per-chunk
+   retry would bound the cost.
+6. **No graceful shutdown** in `worker/index.ts` — no SIGTERM/SIGINT handler
+   calling `worker.close()`. Safe today (transaction aborts, BullMQ recovers
+   the stalled job) but a drain-then-exit is cheap and standard for Railway.
+7. **Concept descriptions are silently dropped.** Gemini returns and Zod
+   validates a `description` per concept, but the insert writes only `name`,
+   despite `concepts.description` existing. Related: in the chunk merge, the
+   first-seen topic description wins, discarding a later chunk's fuller one.
+8. **Per-chunk caps but no post-merge cap.** Zod bounds each chunk (60 topics /
+   30 concepts) but the merged total is unbounded — a long document can write
+   arbitrarily many topic rows.
+9. **Latent infinite loop in `worker/pdf-chunk.ts`** if anyone sets
+   `PAGE_OVERLAP >= PAGES_PER_CHUNK` (stride becomes 0). Needs a one-line
+   guard.
+
+Minor: topic/concept inserts are sequential N+1 awaits inside the transaction
+(batchable); nothing checks `usageMetadata.thoughtsTokenCount` even though
+CLAUDE.md documents it as the leaked-thinking signature worth asserting on.
 
 ## Deployment
 
@@ -271,9 +338,11 @@ Ordered by how much they matter.
    doesn't return you afterwards.
 7. **No email delivery monitoring.** A failed invitation is discovered by the
    student not turning up.
-8. **The syllabus-extraction worker isn't deployed anywhere.** It runs locally
-   via `pnpm worker:dev` against local Redis; there's no Railway (or
+8. **The syllabus-extraction worker isn't deployed anywhere.** Verified
+   working end-to-end locally (`pnpm worker:dev` + `pnpm redis:start` +
+   a real `GEMINI_API_KEY` in `.env.local`), but there's no Railway (or
    equivalent) service, no production Redis, and no `GEMINI_API_KEY` in any
    deployed environment yet.
-9. **No Syllabi tab UI.** The backend (schema, actions, worker) is done; a
-   tutor cannot reach any of it without Server Action calls today.
+9. **No Syllabi tab UI.** The backend (schema, actions, worker) is done and
+   tested via `scripts/test-syllabus-pipeline.ts`; a tutor cannot reach any of
+   it without that script or a direct Server Action call today.

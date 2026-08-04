@@ -9,6 +9,7 @@
 const NOTICES = {
   "lesson-deleted": "Lesson deleted.",
   "class-deleted": "Class deleted.",
+  "syllabus-deleted": "Syllabus deleted.",
 } as const;
 
 export type NoticeKey = keyof typeof NOTICES;

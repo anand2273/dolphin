@@ -21,6 +21,7 @@ export function useFormDialog() {
 export function FormDialog({
   trigger,
   triggerVariant = "default",
+  triggerClassName,
   title,
   description,
   children,
@@ -28,6 +29,8 @@ export function FormDialog({
   /** Label of the button that opens the dialog. */
   trigger: React.ReactNode;
   triggerVariant?: ButtonProps["variant"];
+  /** Extra classes for the trigger, e.g. restyling it as a full-width AddRow. */
+  triggerClassName?: string;
   title: string;
   description?: string;
   children: React.ReactNode;
@@ -41,6 +44,7 @@ export function FormDialog({
       <Button
         type="button"
         variant={triggerVariant}
+        className={triggerClassName}
         onClick={() => dialogRef.current?.showModal()}
       >
         {trigger}

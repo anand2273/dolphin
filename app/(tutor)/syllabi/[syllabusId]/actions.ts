@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { concepts, syllabuses, topicConcepts, topics } from "@/lib/db/schema";
@@ -15,7 +16,19 @@ import {
   updateTopicSchema,
 } from "@/lib/validation/syllabus";
 import { enqueueSyllabusExtraction } from "@/lib/queue/syllabus-extraction";
+import { deleteSyllabus } from "@/app/(tutor)/syllabi/actions";
 import type { FormState } from "@/lib/types";
+
+/**
+ * UI-only wrapper around deleteSyllabus: that action returns void and doesn't
+ * redirect (unlike deleteClass), because the detail page — not the action
+ * itself — knows it needs to navigate the tutor away afterwards. Matches
+ * ConfirmButton's `() => Promise<void>` shape exactly.
+ */
+export async function deleteSyllabusAndRedirect(syllabusId: string): Promise<void> {
+  await deleteSyllabus(syllabusId);
+  redirect("/syllabi?notice=syllabus-deleted");
+}
 
 /**
  * Every mutation here re-derives the syllabus from the topic/concept id given —

@@ -89,6 +89,14 @@ const responseSchema = {
 export async function extractTopicsAndConcepts(input: {
   fileBytes: ArrayBuffer;
   mimeType: string;
+  /**
+   * Present when this call is one structural chunk of a larger document
+   * (see worker/pdf-chunk.ts). Tightens the prompt to refuse inference
+   * beyond what this excerpt explicitly states, and gives the model the
+   * page range so it doesn't mistake a mid-document excerpt for the whole
+   * syllabus.
+   */
+  pageRange?: { startPage: number; endPage: number; totalPages: number };
 }): Promise<SyllabusExtractionResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
@@ -99,7 +107,7 @@ export async function extractTopicsAndConcepts(input: {
     // was observed leaking its internal reasoning into output fields, breaking
     // the JSON. "flash-lite" is the non-thinking tier, which is what a
     // structured-extraction task like this wants.
-    model: "gemini-flash-lite-latest",
+    model: "gemini-flash-latest",
     generationConfig: {
       responseMimeType: "application/json",
       responseSchema,
@@ -110,15 +118,51 @@ export async function extractTopicsAndConcepts(input: {
     },
   });
 
+  const basePrompt =
+      "Extract this syllabus document into a hierarchy of topics and concepts. " +
+      "Preserve the document's original terminology and order where possible. " +
+      "Do not infer a curriculum hierarchy if it is not explicit in the document. " +
+
+      "A topic is a major sub-area of the subject that groups several related " +
+      "skills, methods, formulas, or ideas. A concept is a more specific skill, " +
+      "technique, formula, method, or terminology taught within a topic. " +
+
+      "Choose a topic granularity between the broad subject and individual concepts. " +
+      "For example, in Linear Algebra, 'Linear Algebra' is too broad to be a topic, " +
+      "'Vectors' is an appropriate topic, and 'Vector Cross Product' is a concept. " +
+      "Similarly, in Organic Chemistry, 'Organic Chemistry' is too broad, " +
+      "'Hydroxyl Compounds' is an appropriate topic, and 'Grignard Reaction' is a concept. " +
+      "Similarly, Calculus is too broad: Differentiation Techniques is a topic, Chain rule is a concept" +
+
+      "Do not promote concepts into separate topics. Do not create topics or concepts " +
+      "that are not supported by the document. When the document's hierarchy is " +
+      "ambiguous, prefer the most literal interpretation of its headings. " +
+
+      "Names should be concise. Descriptions should be one sentence.";
+
+  // Chunk mode trades one whole-document call for several narrow ones
+  // specifically to kill this failure mode: given the full document, the
+  // model would fill gaps with what a syllabus "usually" covers. Told
+  // explicitly it's holding only a slice, and ordered to return nothing
+  // rather than guess, it has no reason to do that.
+  const chunkAddendum = input.pageRange
+      ? " This is NOT the full document — it is an excerpt covering pages " +
+        `${input.pageRange.startPage}-${input.pageRange.endPage} of ` +
+        `${input.pageRange.totalPages} total pages. Only extract a topic or ` +
+        "concept if it is explicitly and unambiguously named or described " +
+        "somewhere in THIS excerpt. Do not infer, guess, or complete a topic " +
+        "or concept based on what a syllabus for this subject would typically " +
+        "contain, and do not use knowledge of the subject beyond this excerpt's " +
+        "literal text. If this excerpt contains no clearly stated topic content " +
+        "(e.g. it is a cover page, table of contents, administrative text, or " +
+        "otherwise inconclusive), return an empty topics array rather than a " +
+        "best guess."
+      : "";
+
   const base64 = Buffer.from(input.fileBytes).toString("base64");
   const result = await model.generateContent([
     { inlineData: { data: base64, mimeType: input.mimeType } },
-    {
-      text:
-        "Extract this syllabus document's topics and, for each topic, the " +
-        "concepts it covers. Use the document's own structure and terminology " +
-        "where possible. Names should be a few words; descriptions one sentence.",
-    },
+    { text: basePrompt + chunkAddendum },
   ]);
 
   const finishReason = result.response.candidates?.[0]?.finishReason;

@@ -11,7 +11,14 @@ export default async function TutorLayout({
   const { user, profile } = await requireTutor();
   return (
     <>
-      <TopBar name={profile.fullName ?? user.email} homeHref="/dashboard" />
+      <TopBar
+        name={profile.fullName ?? user.email}
+        homeHref="/dashboard"
+        navItems={[
+          { label: "Classes", href: "/dashboard" },
+          { label: "Syllabi", href: "/syllabi" },
+        ]}
+      />
       {children}
     </>
   );

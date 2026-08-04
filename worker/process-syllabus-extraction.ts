@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import {
   attachments,
@@ -10,7 +10,49 @@ import {
 import { SYLLABUS_DOCUMENTS_BUCKET } from "@/lib/storage/config";
 import { createSignedDownloadUrl } from "@/lib/storage/objects";
 import type { SyllabusExtractionJob } from "@/lib/queue/syllabus-extraction";
-import { extractTopicsAndConcepts } from "./gemini-extract";
+import { extractTopicsAndConcepts, type SyllabusExtractionResult } from "./gemini-extract";
+import { chunkPdfByPages } from "./pdf-chunk";
+
+const PDF_MIME_TYPE = "application/pdf";
+
+/**
+ * Merges per-chunk results in document order. Chunks overlap by one page on
+ * purpose (see pdf-chunk.ts), so the same topic can legitimately appear in
+ * two consecutive chunks — matched here by case-insensitive name rather than
+ * kept as a duplicate. Concepts are merged the same way within a matched
+ * topic.
+ */
+function mergeExtractionResults(
+  chunkResults: SyllabusExtractionResult[],
+): SyllabusExtractionResult {
+  const topics: SyllabusExtractionResult["topics"] = [];
+  const topicIndexByName = new Map<string, number>();
+
+  for (const chunkResult of chunkResults) {
+    for (const extractedTopic of chunkResult.topics) {
+      const topicKey = extractedTopic.name.toLowerCase();
+      const existingIndex = topicIndexByName.get(topicKey);
+
+      if (existingIndex === undefined) {
+        topicIndexByName.set(topicKey, topics.length);
+        topics.push({ ...extractedTopic, concepts: [...(extractedTopic.concepts ?? [])] });
+        continue;
+      }
+
+      const existingTopic = topics[existingIndex];
+      const conceptNames = new Set(
+        (existingTopic.concepts ?? []).map((c) => c.name.toLowerCase()),
+      );
+      for (const concept of extractedTopic.concepts ?? []) {
+        if (conceptNames.has(concept.name.toLowerCase())) continue;
+        conceptNames.add(concept.name.toLowerCase());
+        existingTopic.concepts = [...(existingTopic.concepts ?? []), concept];
+      }
+    }
+  }
+
+  return { topics };
+}
 
 /**
  * The consumer side of the async extraction pipeline. Mirrors
@@ -58,15 +100,41 @@ export async function processSyllabusExtraction(
     }
     const fileBytes = await response.arrayBuffer();
 
-    const result = await extractTopicsAndConcepts({
-      fileBytes,
-      mimeType: attachment.mimeType,
-    });
+    // Structural (page-based) chunking is PDF-only for now — other formats
+    // still go through a single whole-document call. See CLAUDE.md's
+    // Syllabus extraction section for why.
+    let result: SyllabusExtractionResult;
+    if (attachment.mimeType === PDF_MIME_TYPE) {
+      const chunks = await chunkPdfByPages(fileBytes);
+      const chunkResults = await Promise.all(
+        chunks.map((chunk) =>
+          extractTopicsAndConcepts({
+            fileBytes: chunk.fileBytes,
+            mimeType: PDF_MIME_TYPE,
+            pageRange: {
+              startPage: chunk.startPage,
+              endPage: chunk.endPage,
+              totalPages: chunk.totalPages,
+            },
+          }),
+        ),
+      );
+      result = mergeExtractionResults(chunkResults);
+    } else {
+      result = await extractTopicsAndConcepts({
+        fileBytes,
+        mimeType: attachment.mimeType,
+      });
+    }
 
     await db.transaction(async (tx) => {
       // Concepts are tutor-scoped and may already exist (from another syllabus
       // or a previous extraction); reuse the live row under the same name
-      // rather than creating a duplicate.
+      // rather than creating a duplicate. Matched case-insensitively because
+      // concepts_tutor_name_live_uidx (lib/db/schema.ts) is a case-insensitive
+      // unique index on (tutor_id, lower(name)) — a case-sensitive lookup here
+      // can miss an existing row that differs only in case and then collide
+      // with that same index on insert.
       const conceptIdByName = new Map<string, string>();
       async function conceptIdFor(name: string): Promise<string> {
         const key = name.toLowerCase();
@@ -79,7 +147,7 @@ export async function processSyllabusExtraction(
           .where(
             and(
               eq(concepts.tutorId, syllabus.tutorId),
-              eq(concepts.name, name),
+              sql`lower(${concepts.name}) = ${key}`,
               isNull(concepts.deletedAt),
             ),
           )

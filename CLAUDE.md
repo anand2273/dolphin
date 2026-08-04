@@ -156,7 +156,11 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
   persistent process a queue consumer needs.
 - The worker needs its own env: `REDIS_URL`, `DATABASE_URL`, `GEMINI_API_KEY`,
   plus the Supabase service-role key `lib/storage/objects.ts` already uses.
-  None of these belong in the Vercel/Next env.
+  None of these belong in the Vercel/Next env. **`worker/index.ts` does not get
+  `.env.local` for free the way Next does** — `worker/env.ts` (dotenv, same
+  pattern as `drizzle.config.ts`) must be the *first* import in any worker
+  entrypoint, before anything that reads env at module-load time
+  (`lib/db/client.ts` throws immediately if `DATABASE_URL` is missing).
 - `syllabuses.extraction_status` (`none | pending | processing | done | failed`)
   is a distinct enum from `attachments.extraction_status` — the latter tracks
   OCR-style text extraction (still unused, still v1's AI hook); this one tracks
@@ -164,6 +168,91 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
 - Presets (`lib/syllabus-presets/`) are static code fixtures, not DB rows —
   "create from preset" deep-copies a fixture into a new tutor-owned syllabus;
   the fixture and any other tutor's data are never touched by that copy.
+- **PDFs are chunked structurally before extraction, not sent whole.**
+  Whole-document extraction was producing topics too vague/generic — with the
+  full document in context, the model filled gaps with what a syllabus for
+  the subject "usually" covers instead of only what the document said.
+  `worker/pdf-chunk.ts` splits the PDF into fixed-size, page-based windows (3
+  pages, 1-page overlap — structural, not an LLM deciding boundaries
+  semantically); each chunk gets its own `extractTopicsAndConcepts` call with
+  an addendum telling it the chunk is a partial excerpt and it must return an
+  empty `topics` array rather than infer beyond that excerpt's literal text.
+  Chunks run fully concurrently (`Promise.all` in
+  `worker/process-syllabus-extraction.ts`) — deliberately uncapped since the
+  Gemini key is paid-tier; revisit with a concurrency cap if this ever runs
+  on a free-tier key or starts tripping 429s. `worker/process-syllabus-
+  extraction.ts` then merges the per-chunk results by case-insensitive
+  topic/concept name (the 1-page overlap means the same topic can
+  legitimately reappear in two consecutive chunks). **PDF only** —
+  `.txt`/`.doc`/`.docx` still go through the original single whole-document
+  call; there is no chunking story for those yet.
+- **Verified working locally end-to-end** (2026-08): a real document uploaded,
+  extracted by Gemini, and written as topics/concepts, via
+  `scripts/test-syllabus-pipeline.ts` (below). Not yet deployed anywhere —
+  worker and Redis both run locally only; see `docs/status.md` known gaps.
+
+### Model gotchas — learned by breaking it, do not pick a model by guessing
+
+- **Use `gemini-flash-lite-latest`**, not a bare `"-latest"` alias. That alias
+  was observed resolving to a *thinking* model that leaked its internal
+  reasoning straight into JSON output fields (visible via a nonzero
+  `thoughtsTokenCount` in `usageMetadata`), corrupting the extraction. The
+  "lite" tier is the non-thinking one, which is what a structured-extraction
+  task wants.
+- **Dated model names are actively being sunset.** `gemini-2.5-flash` and
+  `gemini-2.0-flash` both now 404 on `generateContent` ("no longer available"),
+  despite still appearing in `ListModels`. Don't pin a dated version; the
+  `-latest` alias family is the only thing confirmed to keep working, and even
+  that needs the guards below.
+- **The guards in `worker/gemini-extract.ts` are load-bearing, not
+  boilerplate**: `maxOutputTokens` + a `finishReason !== "STOP"` check exist
+  because this model was reproduced going into a degenerate repetition loop —
+  one field ballooning to ~49k tokens of repeated filler while still producing
+  syntactically valid JSON that would otherwise pass validation silently.
+  Zod's per-field `.max()` length caps exist for the same reason: a
+  finishReason of `STOP` alone doesn't guarantee sane content.
+- **Schema-level per-field `description`s and marking `concepts` required in
+  the `responseSchema` are also load-bearing.** Without them, the model was
+  observed flattening a topic's own concepts into sibling top-level topics,
+  and omitting the `concepts` array outright most of the time. Both went away
+  once the nesting was spelled out explicitly in the schema, not just prose.
+- If this breaks again after a future Gemini deprecation: re-run
+  `scripts/test-syllabus-pipeline.ts` against a real sample doc, inspect
+  `result.response.candidates[0].finishReason` and `usageMetadata` for a
+  leaked-thinking or repetition signature before assuming it's a prompt
+  problem.
+
+### Testing without a UI
+
+There is no Syllabi tab yet, and Server Actions can't be invoked directly from
+curl/Postman (Next's internal encoding, not plain REST). Use
+`scripts/test-syllabus-pipeline.ts` instead — a permanent, checked-in dev tool
+(not a UI substitute) that seeds a real upload against one fixed reusable test
+tutor account (`syllabus-pipeline-test@test.local`):
+
+```
+pnpm test:syllabus-pipeline <file.txt|.pdf|.doc|.docx> ["title"]   # seed + enqueue
+pnpm test:syllabus-pipeline --status <syllabusId>                  # check result
+pnpm test:syllabus-pipeline --cleanup                               # wipe test data, keep the account
+```
+
+Run `pnpm worker:dev` in another terminal to actually process what it enqueues.
+
+### Local Redis
+
+`pnpm redis:start` / `pnpm redis:stop` run a `dolphn-redis` Docker container
+(no persistence — queue jobs are transient, `removeOnComplete: true`).
+**Mapped to host port 6380, not the default 6379** — port 6379 was already
+taken by an unrelated project's container on the dev machine this was set up
+on; check for a conflict before assuming 6379 is free elsewhere. `.env.local`'s
+`REDIS_URL` must match whichever port is actually used.
+
+**Adding a new private bucket needs a real `supabase stop && supabase start`,
+not just an edit to `supabase/config.toml`.** A `supabase start` that resumes
+from an existing DB backup does NOT re-run bucket provisioning — only a
+from-scratch init does. Data survives the stop/start (backed up to a Docker
+volume), so this is safe, just non-obvious. (Symptom if skipped: `Bucket not
+found` on first upload attempt against a brand new bucket.)
 
 ## Documentation
 
@@ -203,6 +292,9 @@ precedent for adding AI tooling elsewhere without asking again):
   from `app/` or `lib/` the Next.js app touches
 - BullMQ + Redis (`ioredis`) — job queue between the Next app (producer) and
   the worker (consumer)
+- `pdf-lib` — only ever imported from `worker/pdf-chunk.ts`, used to slice an
+  uploaded PDF into page-range sub-documents for structural chunking (see
+  Syllabus extraction above)
 - The `worker/` process itself needs an always-on host outside Vercel (Railway
   suggested); Redis needs its own instance
 
@@ -220,8 +312,11 @@ pnpm db:migrate     # apply migrations
 pnpm db:studio
 pnpm sb:start       # local Supabase stack
 pnpm sb:stop
+pnpm redis:start    # local Redis (Docker), for the syllabus-extraction queue
+pnpm redis:stop
 pnpm worker:dev     # syllabus-extraction worker, watch mode (needs REDIS_URL, GEMINI_API_KEY)
 pnpm worker:start   # same, no watch — what production runs
+pnpm test:syllabus-pipeline   # seed/status/cleanup a real extraction test, no UI needed
 ```
 
 Two ways to lose an afternoon here:

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { signOut } from "@/app/(auth)/actions";
 import { Brand } from "@/components/brand";
+import { TopNav } from "@/components/top-nav";
 
 /**
  * The persistent shell header. Rendered by the signed-in route-group layouts —
@@ -10,11 +11,14 @@ import { Brand } from "@/components/brand";
 export function TopBar({
   name,
   homeHref,
+  navItems,
 }: {
   /** Display name for the avatar initial; falls back to email upstream. */
   name: string;
   /** Role-resolved home: /dashboard for tutors, /student for students. */
   homeHref: string;
+  /** Extra top-level destinations beyond the home link (tutor-only today: Syllabi). */
+  navItems?: { label: string; href: string }[];
 }) {
   const initial = (name.trim()[0] ?? "?").toUpperCase();
 
@@ -24,15 +28,7 @@ export function TopBar({
         <Link href={homeHref} aria-label="Dolphn home">
           <Brand />
         </Link>
-        <nav aria-label="Primary" className="ml-2 hidden sm:flex">
-          <Link
-            href={homeHref}
-            className="rounded-sm bg-muted px-2.5 py-1.5 text-[13.5px] font-medium text-foreground"
-            aria-current="page"
-          >
-            Classes
-          </Link>
-        </nav>
+        <TopNav items={navItems ?? [{ label: "Classes", href: homeHref }]} />
         <div className="ml-auto flex items-center gap-3">
           <form action={signOut}>
             <button

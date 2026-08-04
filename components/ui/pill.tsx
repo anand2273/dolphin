@@ -10,6 +10,7 @@ const pillVariants = cva(
         accent: "bg-primary-tint font-semibold text-primary",
         /** Reserved for homework-due; nothing renders it until CP6. */
         due: "bg-amber-tint font-semibold text-amber",
+        danger: "bg-destructive-tint font-semibold text-destructive",
       },
     },
     defaultVariants: { variant: "quiet" },
