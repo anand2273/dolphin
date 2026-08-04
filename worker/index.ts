@@ -48,4 +48,53 @@ worker.on("failed", (job, err) => {
   );
 });
 
-console.log("[syllabus-extraction] worker started, waiting for jobs");
+// Without this listener a connection-level 'error' is an unhandled 'error'
+// event on an EventEmitter, which takes the whole process down — so the one
+// thing that tells you the Redis leg is broken would instead present as a
+// silent restart loop.
+worker.on("error", (err) => {
+  console.error("[syllabus-extraction] worker error", err);
+});
+
+connection.on("error", (err) => {
+  console.error("[syllabus-extraction] redis connection error", err);
+});
+
+/**
+ * Report readiness only once Redis actually answers, and say WHICH Redis.
+ *
+ * The old unconditional log at the bottom of this file ran synchronously right
+ * after `new Worker(...)`, which does not block on a connection — so it printed
+ * identically whether Redis was reachable, unreachable, or simply a different
+ * database than the producer writes to. Combined with `maxRetriesPerRequest:
+ * null` above (required for a blocking connection, so it retries forever
+ * instead of failing), a misconfigured worker looked exactly like a healthy
+ * one. This is the worker-side twin of the producer hang described in
+ * lib/queue/syllabus-extraction.ts.
+ *
+ * The waiting-jobs count is the useful half: a worker that reports 0 waiting
+ * while the producer's Upstash console shows queued jobs is proof the two
+ * hosts are pointed at different databases.
+ */
+connection.once("ready", () => {
+  void (async () => {
+    const host = `${connection.options.host}:${connection.options.port}`;
+    try {
+      const waiting = await connection.llen(
+        `bull:${SYLLABUS_EXTRACTION_QUEUE}:wait`,
+      );
+      const active = await connection.llen(
+        `bull:${SYLLABUS_EXTRACTION_QUEUE}:active`,
+      );
+      console.log(
+        `[syllabus-extraction] connected to ${host} — ${waiting} waiting, ${active} active`,
+      );
+    } catch (e) {
+      console.error(
+        `[syllabus-extraction] connected to ${host} but queue probe failed`,
+        e,
+      );
+    }
+    console.log("[syllabus-extraction] worker started, waiting for jobs");
+  })();
+});

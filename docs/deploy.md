@@ -366,7 +366,26 @@ Deploy the worker first and watch its log for:
 [syllabus-extraction] worker started, waiting for jobs
 ```
 
-That line proves the worker's `REDIS_URL`, TLS and Upstash auth are all good.
+preceded by the line that actually proves the connection:
+
+```
+[syllabus-extraction] connected to HOST:PORT — N waiting, M active
+```
+
+**Only the `connected to` line means anything.** Until 2026-08-04 the "worker
+started" line was a bare `console.log` running synchronously after
+`new Worker(...)`, which does not block on a connection — so it printed
+identically whether Redis was reachable, unreachable, or a *different database
+than the producer writes to*. With `maxRetriesPerRequest: null` (mandatory for
+the worker's blocking connection) ioredis then retried forever in silence, and
+there was no `error` listener, so a completely disconnected worker looked
+healthy in the log. Both lines now print only on a real `ready` event, and
+connection errors are logged.
+
+Read the counts: a worker reporting `0 waiting` while the Upstash console shows
+queued jobs means the two hosts are on **different databases** — the single
+most common cause of "producer works, worker never picks up".
+
 Then put the **same** `REDIS_URL` into Vercel (step 7), redeploy, and upload a
 syllabus document at `/syllabi`.
 
@@ -401,8 +420,15 @@ different leg:
   Upstash's usage graph is flat) — confirms the producer, not the worker. Same
   cause as above.
 - **A job is waiting in Redis but the pill stays `pending`** — the opposite
-  leg: the producer worked and the *worker* is not consuming. Check it is
-  running, and that both hosts point at the same Upstash database.
+  leg: the producer worked and the *worker* is not consuming. Check the
+  `connected to HOST — N waiting` line above: if `N` is 0 while jobs are
+  visibly queued, the two hosts are on different Upstash databases. If `N`
+  matches the real backlog and nothing drains, suspect, in order:
+  **the free tier's 10k/day command cap** (an idle worker burns ~3k/day just
+  polling; past the cap Upstash rejects commands and BullMQ stops dequeuing
+  with no other symptom — the new `redis connection error` line surfaces it),
+  eviction being enabled (9a), or a **Global** Upstash database serving the
+  worker's reads from a lagging replica — use a Regional one for a queue.
 - **Stuck on `pending` with an empty queue and a healthy worker** — eviction
   is enabled and dropped the job (9a).
 - **`processing` → `failed`** — the worker got it and something inside blew
