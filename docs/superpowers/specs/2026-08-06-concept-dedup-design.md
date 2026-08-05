@@ -1,4 +1,4 @@
-# Embedding-based concept deduplication — design
+# Concept deduplication — design
 
 Date: 2026-08-06
 Status: approved design, not yet implemented
@@ -12,85 +12,122 @@ row, backed by the partial unique index `concepts_tutor_name_live_uidx` on
 `(tutor_id, lower(name)) where deleted_at is null`.
 
 `BASE_PROMPT`'s NAMING rules push hard to make that exact match succeed —
-lowercase everything, strip numbering, strip articles, don't pluralise, don't
-translate. That is normalisation-as-prompt-engineering, and it cannot reach
-synonymy. `"the quadratic formula"` collapses into `"quadratic formula"` today.
-`"differentiating composite functions"` and `"chain rule"` do not, and never
-will by string comparison.
+lowercase everything, strip numbering, strip articles, don't pluralise. That is
+normalisation-as-prompt-engineering, and it does not survive contact with real
+documents. The local corpus is **736 live concepts across 6 syllabuses**, and it
+contains this:
 
-The local corpus is 736 live concepts across 6 syllabuses and 162 topics. Every
-further upload adds more near-duplicates.
+```
+alcohol            |  alcohols
+rate constant      |  rate constants
+coulomb's law      |  coulomb’s law          (straight vs curly apostrophe)
+ideal gas behavior |  ideal gas behaviour    (US vs UK spelling)
+Inverse Matrix     |  Matrix Inverse         (word order)
+batteries and fuel cells | fuel cells and batteries
+```
 
 **Goal: a clean, navigable vocabulary.** This is a curation feature, judged by
 whether the tutor's concept list is usable as a picker — not by whether later
-analytics aggregate correctly. Correct aggregation is a welcome side effect, not
-the acceptance criterion.
+analytics aggregate correctly.
+
+## What this is, after measurement
+
+This began as an embedding/pgvector design. It was calibrated against the real
+736-concept corpus, and **the embeddings did not earn their complexity**. The
+full measurements are in "Evidence" below and are the main reason this document
+exists — they should be read before anyone proposes reinstating embeddings.
+
+The feature ships as **normalised-key clustering with tutor sign-off**. All the
+human-facing machinery — cluster review, tombstone merges, pairwise rejections,
+the Concepts destination — is unchanged from the original design. Only the
+detection function differs, and it is deliberately one swappable module.
 
 ## Scope
 
-**In:** embedding concept names, detecting duplicate clusters, a tutor review
-surface, merging with a reversible tombstone, and a one-off backfill of existing
-concepts.
+**In:** normalised-key duplicate detection, a cluster review surface, merging
+with a reversible tombstone, and permanent pairwise rejections.
 
-**Out:** auto-merging without tutor confirmation; embedding anything other than
-concept names; analytics; the question bank; `classes.syllabus_id`. Similarity
-ranks candidates. The tutor decides. Nothing merges on its own, ever.
+**Out:** pgvector, embeddings, any Gemini call on this path, a backfill job,
+auto-merging without tutor confirmation, analytics, the question bank.
+
+Detection ranks candidates. The tutor decides. Nothing merges on its own.
 
 ## Decisions
 
 | Decision | Choice | Why |
 |---|---|---|
 | Goal | Clean vocabulary | Curation, not statistics |
-| Coverage | Backfill + forward | An already-messy list must improve, and new concepts need existing vectors to compare against anyway |
-| Review unit | Cluster, pick a survivor | Real duplication is 3–4 variants of one idea, not isolated pairs; pairwise votes can contradict each other |
-| Academic level | One concept, level derived | `syllabuses.level` already exists; a concept's levels are a join. Zero schema cost, and difficulty belongs on the question |
-| Review home | Concepts destination + syllabus banner | Backfill clusters span syllabuses and belong to no single one |
-| Embedding input | Name only | Measured: adding descriptions destroys the band entirely. See below |
+| Detection | Normalised-key match | Measured: 45 of the 58 merges embeddings find, at ~5% of the machinery, with better precision on plurals |
+| Review unit | Cluster, pick a survivor | Real duplication is 3–4 variants of one idea |
+| Academic level | One concept, level derived | `syllabuses.level` already exists; a concept's levels are a join. Zero schema cost |
+| Review home | Concepts destination + syllabus banner | Clusters span syllabuses and belong to no single one |
 | Merge model | Tombstone `merged_into_id` | Survives re-extraction, gives undo, preserves provenance |
 | Cluster storage | Derived on read | Nothing to invalidate |
+| Write-path matching | Unchanged, exact `lower(name)` | Normalising at write time would silently merge `alcohol` into `alcohols` with no tutor sign-off |
+
+### Why detection is read-time only
+
+The write path deliberately keeps its existing exact-match behaviour. If
+`conceptIdFor` matched on the normalised key, extraction would quietly collapse
+`alcohol` and `alcohols` into one row — a merge decision made without the tutor,
+which is the one thing this feature must never do. Normalisation informs review;
+it never performs a merge.
 
 ### Why clusters are derived, not stored
 
-Persist three things: **embeddings**, **tombstones**, **rejected pairs**.
-Everything else is a query.
+Persist two things: **tombstones** and **rejected pairs**. Everything else is
+computed.
 
 ```
-clusters = f(live concepts + vectors, rejected pairs)
+clusters = f(live concepts, rejected pairs)
 ```
 
-Stored candidate rows would go stale on every merge — merging one cluster
-changes the membership of any cluster that overlaps it. That produces confusing
-UI rather than loud failures. Deriving removes the invalidation logic entirely,
-because there is no cache to be wrong.
+Stored candidate rows would go stale on every merge. Deriving removes the
+invalidation logic entirely, because there is no cache to be wrong.
 
-### Why rejections are pairwise, not per-cluster
+Because clustering is by *equal normalised key*, grouping is transitive — a
+plain `GROUP BY` over the key, with no connected-components pass. This is
+strictly simpler than the similarity-graph version an embedding approach would
+have required.
 
-Clusters have no stable identity. "chain rule +3" is a different set after any
-merge anywhere near it, so a cluster-level rejection has nothing durable to
-attach to. Pairs are stable forever.
+### Why rejections are pairwise
 
-"Not duplicates — keep all" on a cluster of N writes N·(N−1)/2 rejection rows.
-Derived clustering then excludes those pairs, and the cluster stops appearing.
+Two concepts may share a key today and a third may join that group tomorrow. A
+rejection recorded against the group would suppress the new member too. Pairs
+are stable: a cluster is shown when it contains at least one pair the tutor has
+not already rejected, so a new arrival re-surfaces it while previously-rejected
+pairs stay quiet.
+
+## The normalisation
+
+The whole of detection. Deliberately small, pure, and unit-testable — a single
+module, no database involvement:
+
+1. Lowercase
+2. Unify apostrophes (`’ ‘ \``  → `'`), strip `'s`, then strip `'`
+3. Replace any non-alphanumeric run with a space
+4. Drop stopwords: `the of and a an for to in on its it from with between by`
+5. Crude singularise: `ies`→`y`, `ses`/`xes`→ drop `es`, trailing `s` (but not `ss`)
+6. `-our` → `-or` (`behaviour` → `behavior`)
+7. Deduplicate tokens, sort them, join with a space
+
+Two concepts belong to the same cluster **iff their keys are equal**.
+
+Measured on the real corpus: 39 clusters, 84 concepts affected, **45 net
+reduction, and no false positives** across all 39 (each was read individually).
+
+Steps 5–7 are what earn this over `lower(name)`: singularising catches
+`alcohol/alcohols`, `-our` catches `behaviour/behavior`, and sorting catches
+`Inverse Matrix/Matrix Inverse`.
 
 ## Schema diff
 
-Propose before migrating, per the working agreement. Drizzle 0.45.2 exports
-`vector` from `drizzle-orm/pg-core` — no new npm dependency. pgvector is a
-Postgres extension, enabled in the migration.
+Propose before migrating, per the working agreement. **No extension, no new
+dependency, no index changes.**
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS vector;
-
--- 768, not gemini-embedding-001's native 3072: pgvector's HNSW/IVFFlat
--- indexes cap at 2000 dimensions, and measured quality is identical.
 ALTER TABLE concepts
-  ADD COLUMN embedding vector(768),
   ADD COLUMN merged_into_id uuid REFERENCES concepts(id) ON DELETE SET NULL;
-
--- Partial: only live concepts are ever searched.
-CREATE INDEX concepts_embedding_hnsw_idx
-  ON concepts USING hnsw (embedding vector_cosine_ops)
-  WHERE deleted_at IS NULL;
 
 CREATE TABLE concept_merge_rejections (
   tutor_id     uuid NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -105,362 +142,110 @@ CREATE INDEX concept_merge_rejections_tutor_id_idx
   ON concept_merge_rejections (tutor_id);
 ```
 
-The `CHECK (concept_a_id < concept_b_id)` enforces canonical pair ordering so a
-rejected pair is stored exactly once and can never be double-inserted in the
-opposite order.
+`CHECK (concept_a_id < concept_b_id)` enforces canonical pair ordering, so a
+rejected pair is stored exactly once and cannot be double-inserted reversed.
 
-`concepts.description` needs **no schema change** — the column already exists
-and is simply never written. See "Finding #7" below.
+`concepts.description` needs no schema change — the column exists and is simply
+never written. See "Finding #7".
 
-Migrations are Drizzle's (`pnpm db:generate` / `db:migrate`) against a direct or
-session-pooler connection on 5432, never the transaction pooler.
+Migrations are Drizzle's, against a direct or session-pooler connection on 5432,
+never the transaction pooler.
 
 ## Architecture
 
-### Write path — extraction (worker)
+### Read path
 
-The flow is **resolve → embed → write**, with all network I/O completed before
-the transaction opens, so nothing holds locks across an API call.
+No new query is needed. `listConceptsForTutor` already returns exactly the rows
+required; clustering happens in TypeScript over its result.
 
 ```
-extract chunks → mergeExtractionResults() → full candidate concept list
+listConceptsForTutor(tutorId)        existing query, unchanged
   ↓
-resolve each name by string (no vectors needed):
-     live exact name match      → reuse that row
-     tombstone name match       → follow merged_into_id, reuse the winner
-     neither                    → genuinely new
+group by normalisedKey(name)          pure function, unit-testable
   ↓
-batch-embed ONLY the genuinely-new names    one API call, outside the TX
+drop groups of size 1
   ↓
-BEGIN → write topics, concepts (with vectors), topic_concepts → COMMIT
+drop groups where every pair is already rejected
+  ↓
+clusters
 ```
 
-Resolving by string first means we never pay to embed a name that was going to
-reuse an existing row anyway — on a re-extraction of the same document, that is
-every name.
+At 736 concepts this is a single pass over a few hundred short strings. There is
+no similarity search, no index, and nothing to tune.
 
-**There is deliberately no vector search on the write path.** Because clusters
-are derived on read, a write-time similarity lookup would compute something the
-next page read recomputes anyway, and give the flag two places to disagree. The
-write path's only job is to store a correct vector. Detection is entirely a read
-concern. New concepts are written with their embedding already populated, so the
-extraction path needs no follow-up job.
+### Write path
 
-### Write path — manual and preset (Next.js)
+Unchanged, except that `conceptIdFor` gains tombstone resolution:
 
-`createConcept` and preset-clone run inside the Next app, which **must not**
-import `@google/generative-ai` (CLAUDE.md restricts it to `worker/`). These
-create the row with a `NULL` embedding and enqueue a `concept-embedding` job on
-the existing BullMQ queue; the worker fills it in.
-
-A concept with a `NULL` embedding simply does not participate in clustering
-until the job lands. No special-casing beyond `embedding IS NOT NULL`.
-
-### Read path — clustering
-
-`lib/db/queries/concepts.ts` returns similar pairs; grouping into connected
-components happens in TypeScript, where it is about ten lines.
-
-```sql
-SELECT a.id AS a_id, b.id AS b_id,
-       1 - (a.embedding <=> b.embedding) AS similarity
-  FROM concepts a
-  JOIN concepts b
-    ON  b.tutor_id   = a.tutor_id
-    AND a.id < b.id                      -- canonical ordering, matches the CHECK
-    AND b.deleted_at IS NULL
-    AND b.embedding IS NOT NULL
- WHERE a.tutor_id = $1
-   AND a.deleted_at IS NULL
-   AND a.embedding IS NOT NULL
-   AND (a.embedding <=> b.embedding) < $2
-   AND NOT EXISTS (
-         SELECT 1 FROM concept_merge_rejections r
-          WHERE r.concept_a_id = a.id AND r.concept_b_id = b.id
-       );
 ```
-
-**Honest caveat about the index.** The all-pairs self-join above is a filtered
-pairwise scan and **will not use the HNSW index** — and since the write path
-does no vector search either, nothing in v1 of this feature actually uses it.
-At 736 concepts the self-join is ~270k distance computations, which Postgres
-does in milliseconds. It is not free at 10k.
-
-The index is included anyway because it is cheap to declare and it is exactly
-what the migration path needs: when the all-pairs query gets slow, it is
-replaced by a per-concept top-k ANN query in a lateral join, which *does* use
-it. Declaring it now avoids an index build on a large table later. If that
-justification feels thin at review time, dropping it is a safe call — it can be
-added in a one-line migration whenever it's needed.
+live exact name match   → reuse that row          (today's behaviour)
+tombstone name match    → follow merged_into_id   (new)
+neither                 → create
+```
 
 ### Merge
 
-A Server Action in `app/(tutor)/concepts/actions.ts`, following parse → authorize
-→ mutate → revalidate.
-
-Given a survivor and N losers, in one transaction:
+A Server Action in `app/(tutor)/concepts/actions.ts`, following parse →
+authorize → mutate → revalidate. Given a survivor and N losers, in one
+transaction:
 
 1. Verify **every** concept id belongs to the calling tutor. A survivor id alone
-   does not authorize touching arbitrary loser ids — same rule
-   `linkTopicConcept` already applies.
+   does not authorize touching arbitrary loser ids — the rule `linkTopicConcept`
+   already applies.
 2. Repoint `topic_concepts` from each loser to the survivor, with
    `onConflictDoNothing` (a topic may already link to both).
 3. Soft-delete each loser and set `merged_into_id = survivor`.
-4. **Repoint existing tombstones** that point at any loser to the survivor, so
-   tombstone chains stay exactly one hop deep and resolution never needs a loop
-   guard.
+4. **Repoint existing tombstones** pointing at any loser to the survivor, so
+   chains stay one hop deep and resolution needs no loop guard.
 5. Delete rejection rows involving the losers — they name rows that are no
    longer live and would otherwise accumulate forever.
 6. Write a `concept.merged` event.
 
-Soft-deleting the losers removes them from
-`concepts_tutor_name_live_uidx` (it is partial on `deleted_at is null`), so the
-merge can never collide with it.
+Soft-deleting the losers removes them from `concepts_tutor_name_live_uidx` (it
+is partial on `deleted_at is null`), so a merge can never collide with it.
 
 ### Undo
 
-Clearing `merged_into_id` and `deleted_at` restores a loser — but its
+Clearing `merged_into_id` and `deleted_at` restores a loser, but its
 `topic_concepts` links were repointed and are not recoverable from the tombstone
-alone. **v1 ships no undo UI.** The tombstone makes undo *possible* later; it is
-not a promise made to the tutor now. The merge dialog says the merge is not
-reversible.
+alone. **v1 ships no undo UI.** The tombstone makes undo possible later; it is
+not a promise to the tutor now, and the merge dialog says so.
 
-## Data flow — the re-extraction loop this closes
+## The re-extraction loop this closes
 
-The trap: `concepts_tutor_name_live_uidx` is partial. A plain soft-delete leaves
-no live row, so a later syllabus emitting the old name creates it fresh and the
-tutor is proposed the identical merge again, forever.
+`concepts_tutor_name_live_uidx` is partial. A plain soft-delete leaves no live
+row, so a later syllabus emitting the old name creates it fresh and the tutor is
+proposed the identical merge again, forever.
 
 ```
 concepts
-  id=A  "chain rule"                  deleted_at=NULL
-  id=B  "differentiating composites"  deleted_at=2026-08-06
-                                      merged_into_id=A
+  id=A  "carboxylic acids"   deleted_at=NULL
+  id=B  "carboxylic acid"    deleted_at=2026-08-06
+                             merged_into_id=A
 
-later extraction emits "differentiating composites"
+later extraction emits "carboxylic acid"
   → no live row
   → tombstone B found by name
   → follow merged_into_id → A
   → reuse A.  No new row. No re-prompt.
 ```
 
-## Prerequisite fixes
+## Prerequisite and adjacent fixes
 
-Both are open findings in `docs/status.md` that sit inside the exact function
-this feature rewrites. They are prerequisites, not cleanup.
-
-**Finding #3 — select-then-insert race.** The worker runs `concurrency: 2`. Two
-jobs for one tutor both miss the SELECT and collide on
+**Finding #3 — select-then-insert race. Prerequisite.** The worker runs
+`concurrency: 2`; two jobs for one tutor can both miss the SELECT and collide on
 `concepts_tutor_name_live_uidx` (23505), aborting the transaction and failing
-the whole job; BullMQ then re-pays for every Gemini call. Today the window is
-microseconds. This design does not widen it — embedding happens in a batch
-before the transaction — but the function is being rewritten regardless, so it
-gets `onConflictDoNothing().returning()` plus a re-select.
+the whole job, after which BullMQ re-pays for every Gemini call. `conceptIdFor`
+is being modified for tombstone resolution regardless, so it gets
+`onConflictDoNothing().returning()` plus a re-select at the same time.
 
-**Finding #7 — descriptions silently dropped.** Gemini returns and Zod validates
-a per-concept `description`; `conceptIdFor` takes only `name` and the insert
-writes `{ tutorId, name }`, so `concepts.description` is NULL for all 736 rows.
-Fixed here by threading the description through. It does **not** enter the
-embedding — that would give backfilled and new rows two different recipes in one
-vector space and make the thresholds meaningless. Persisting it now means a
-future re-embed with descriptions has data to work with.
-
-## Embedding model — verified 2026-08-06
-
-**`gemini-embedding-001`, `taskType: SEMANTIC_SIMILARITY`,
-`outputDimensionality: 768`.** Called from `worker/` through the
-`@google/generative-ai` client already in `dependencies`. Batch through
-`batchEmbedContents`, verified working for 7 inputs in one call.
-
-Three things were established by running it, not by reasoning:
-
-**`text-embedding-004` is dead** — 404 on `embedContent`. So is `embedding-001`.
-This draft originally named `text-embedding-004`; it would have failed on first
-run. Exactly the trap CLAUDE.md's model-gotchas section describes. `ListModels`
-reports only `gemini-embedding-001`, `gemini-embedding-2-preview` and
-`gemini-embedding-2`.
-
-**`taskType: SEMANTIC_SIMILARITY` is mandatory, not a nicety.** It is the
-difference between a usable band and no band at all. Measured on a labelled set
-of 6 should-merge and 6 should-not-merge pairs, the gap between the weakest
-true duplicate and the strongest true distinct:
-
-| Config | Usable threshold band |
-|---|---|
-| No `taskType` | 0.7274 – 0.7357 — **0.008 wide, unusable** |
-| `SEMANTIC_SIMILARITY`, 3072d | 0.8973 – 0.9562 — 0.059 wide |
-| `SEMANTIC_SIMILARITY`, 768d | 0.8949 – 0.9545 — 0.060 wide |
-
-(Bands exclude one deep-synonym pair; see the section below.)
-
-**768 dimensions, not the native 3072.** Two reasons. Quality is
-indistinguishable — the band is the same to three decimal places. And pgvector's
-HNSW and IVFFlat indexes **cap at 2000 dimensions**, so a 3072-d column can be
-stored but never indexed, permanently foreclosing the top-k migration path.
-`outputDimensionality: 768` is Matryoshka truncation and is verified working.
-
-The dimension is baked into the column type; changing it later means a column
-change plus a full re-embed.
-
-**`gemini-embedding-2` is measurably worse — do not "upgrade" to it.** Tested
-on the same labelled set, the newer model cannot separate morphological variants
-from sibling concepts at all, where `001` can (narrowly). Both the preview and
-GA variants score identically, at 768 and at native 3072.
-
-| Model @768 | Morph min | Sibling max | Morph separable? |
-|---|---|---|---|
-| `gemini-embedding-001` | 0.9545 | 0.9470 | **yes**, band 0.947–0.955 |
-| `gemini-embedding-2` | 0.8776 | 0.9044 | no, overlap 0.027 |
-| `gemini-embedding-2-preview` | 0.8776 | 0.9044 | no, overlap 0.027 |
-
-If someone later bumps the model on the assumption that a higher number is
-better, this feature silently degrades into noise. Re-run the labelled-set
-comparison before changing it.
-
-## What this catches, and what it does not
-
-Measured, not assumed. This bounds what the feature can honestly promise.
-
-**Caught reliably** — surface and morphological variants, all ≥ 0.954:
-
-```
-0.9952  quadratic formula        ~  the quadratic formula
-0.9922  chain rule               ~  the chain rule
-0.9742  simultaneous equations   ~  solving simultaneous equations
-0.9618  completing the square    ~  method of completing the square
-0.9545  vectors                  ~  vector geometry
-```
-
-Every one of these is invisible to today's exact-string matching. This is the
-feature's real value.
-
-**Correctly left alone** — sibling concepts. The ceiling here is what sets the
-threshold, and it is **much higher than a casual sample suggests**:
-
-```
-0.9470  sine rule     ~  cosine rule        ← the real ceiling
-0.8949  mean          ~  median
-0.8887  algebra       ~  trigonometry
-0.8497  differentiation ~ integration
-0.7925  quadratic formula ~ photosynthesis
-```
-
-`sine rule ~ cosine rule` at 0.9470 is the case that matters: two concepts that
-sit adjacent in any trigonometry syllabus, share a token, and must never merge.
-An earlier draft of this spec put the sibling ceiling at 0.895 and claimed a
-0.060-wide band. That was an artefact of a sibling set with no hard cases in it.
-**The real band is 0.947 – 0.955 — 0.008 wide.**
-
-**Not caught** — deep synonyms with no shared vocabulary:
-
-```
-0.8358  chain rule  ~  differentiating composite functions
-```
-
-This scores *below* `mean ~ median` (0.8949). **No threshold catches the deep
-synonym without also merging mean into median**, which would be a destructive
-false positive on curated data. So the honest scope is: this feature catches
-morphological variants, not conceptual synonyms. A tutor who writes
-"differentiating composite functions" in one syllabus and "chain rule" in
-another still ends up with two concepts.
-
-That is a real limitation and it should not be papered over in the UI copy. It
-is also fine: morphological variants are the bulk of what an LLM extracting the
-same subject from different documents actually produces.
-
-## Why descriptions stay out of the embedding — measured 2026-08-06
-
-The original reason for name-only was consistency: the 736 existing rows have no
-description, so mixing recipes would make scores incomparable. That reason is
-real but weak — descriptions could have been backfilled by re-extraction, since
-the source documents are still in storage and `retrySyllabusExtraction` is
-already idempotent.
-
-So it was tested directly, embedding `name — description` against `name` alone
-on the same labelled set:
-
-| Recipe | Morph min | Deep min | Sibling max | Usable band |
-|---|---|---|---|---|
-| **Name only** | 0.9545 | 0.8358 | 0.9470 | **0.0075** |
-| Name — description | 0.9109 | 0.9118 | 0.9246 | none, overlap 0.0136 |
-| Description only | 0.9084 | 0.9173 | 0.9208 | none, overlap 0.0124 |
-
-Half the hypothesis held and half did not, which is why this needed measuring:
-
-- **Deep synonyms converge sharply**, +0.076 (0.836 → 0.912). Descriptions do
-  capture what the names fail to share.
-- **Siblings barely separate**, −0.022. `sine rule` and `cosine rule` have
-  genuinely different descriptions, and it was not nearly enough — both still
-  read as "relates the sides of a triangle to its angles".
-- **Morphological variants degrade**, −0.044. This is the killer, and it is
-  intrinsic: two syllabuses describing the same concept phrase it differently,
-  and that phrasing variance pushes apart the very pairs the feature exists to
-  catch.
-
-Net, descriptions turn a narrow-but-real band into no band at all. **Name only
-stands, now for an empirical reason rather than a procedural one.**
-
-**Caveat on this result.** The descriptions used were written by hand for the
-test, not produced by Gemini from a real document. The direction and effect
-sizes are clear enough to decide on, but if deep-synonym detection ever becomes
-a priority, re-run this against real extracted descriptions before concluding.
-Descriptions are the obvious lever for that problem — they just cannot be
-applied as a naive concatenation, because they cost more on morphological pairs
-than they gain on deep ones.
-
-## Threshold and calibration
-
-Cosine similarity **0.95**, sitting in the measured band 0.9470 – 0.9545 at 768
-dimensions with `SEMANTIC_SIMILARITY` on `gemini-embedding-001`.
-
-**The band is 0.008 wide. This is the design's weakest point and it must not be
-glossed over.** It works on the labelled set — every morphological variant
-clears 0.95, every sibling including `sine rule ~ cosine rule` falls below it —
-but there is almost no margin. A pair slightly harder than anything tested will
-land on the wrong side.
-
-Two things keep that acceptable rather than fatal:
-
-1. **Nothing merges without the tutor.** A false positive costs one "not
-   duplicates" click, not data. And because rejections are stored pairwise and
-   permanently, each false positive is a **one-time** annoyance — it never
-   appears again.
-2. **Tune upward when in doubt.** The costs are asymmetric: a false positive
-   spends tutor attention and, if rubber-stamped, destroys curated data; a false
-   negative just leaves a duplicate in place, which is the status quo. Precision
-   over recall.
-
-**Calibration against the real 736-concept corpus is now a prerequisite, not a
-nice-to-have.** With a 0.008 band, a constant chosen from 21 hand-labelled pairs
-is not trustworthy on its own. Dump the clusters each candidate value produces
-and read them before shipping. `sine rule ~ cosine rule` at 0.9470 is the
-canary — if it ever appears as a candidate, the threshold is too low.
-
-Store the constant in one module alongside the other tunables, not inline at the
-query.
-
-## Error handling
-
-- **Embedding API fails during extraction** — extraction proceeds and writes
-  concepts with `NULL` embeddings. Topics and concepts are the primary value and
-  must not be lost to a dedup failure. The rows get picked up by the backfill
-  path later.
-- **Embedding job fails (manual/preset path)** — BullMQ retry/backoff. The
-  concept exists and is usable; it just isn't clustered yet.
-- **Backfill fails partway** — idempotent by construction, since it only selects
-  `embedding IS NULL`. Re-run it.
-- **Merge action** — typed result objects (`{ ok }` / `{ error }`), never thrown
-  strings. Authorization failure returns the same opaque "Not authorized" as
-  every other action, disclosing nothing.
-- **Extraction status is unaffected by dedup.** `syllabuses.extraction_status`
-  continues to describe extraction only. Dedup never sets it to `failed`.
-
-## Backfill
-
-A checked-in script in `scripts/`, in the same spirit as
-`scripts/test-syllabus-pipeline.ts` — a permanent dev tool, not a migration
-step. Selects concepts where `embedding IS NULL`, batches them through the
-embedding API, writes vectors. Idempotent and resumable.
+**Finding #7 — descriptions silently dropped. Adjacent, not required.** Gemini
+returns and Zod validates a per-concept `description`; `conceptIdFor` takes only
+`name`, so `concepts.description` is NULL for all 736 rows. In the embedding
+design this was a prerequisite. It no longer is — nothing here reads
+descriptions. It remains a real bug worth fixing in the same area of code, and
+persisting descriptions is what would make a future evaluation of
+description-based detection possible at all.
 
 ## Authorization
 
@@ -473,32 +258,27 @@ only — the same shape as `assertSyllabusOwner`.
 - The rejection action verifies both ids in every pair.
 - `lib/db/queries/concepts.ts` filters on `tutor_id` before any row is read; a
   concept id from the client is only ever a lookup key.
-- A student has no access to any of this. Concepts live under `(tutor)/`.
+- Students have no access. Concepts live under `(tutor)/`.
 
 ## UI
 
 **Concepts destination** — `app/(tutor)/concepts/page.tsx`, a new top-level nav
-entry. Lists the tutor's live concepts and the derived clusters awaiting review.
-Server Component, following the existing panel/row/pill vocabulary.
+entry listing the tutor's live concepts and the clusters awaiting review. Server
+Component, using the existing panel/row/pill vocabulary.
 
 **Cluster review** — the tutor picks which name survives; the rest merge into it.
-Shows each variant's topic count so the choice is informed. "Not duplicates —
-keep all" writes the pairwise rejections. A `"use client"` component, because it
-holds radio selection state — with the one-line comment saying so.
+Each variant shows its topic count so the choice is informed. "Not duplicates —
+keep all" writes the pairwise rejections. `"use client"` for the radio state,
+with the one-line comment saying why.
 
-**Syllabus banner** — on `app/(tutor)/syllabi/[syllabusId]/page.tsx`, after
-extraction completes: "3 of 12 new concepts may duplicate concepts you already
-have", linking into the Concepts page. Dismissible, and never blocks the topics
-list.
+**Syllabus banner** — on the syllabus page after extraction: "3 of 12 new
+concepts may duplicate concepts you already have", linking to Concepts.
+Dismissible, never blocks the topics list.
 
 Extraction always produces a complete, usable syllabus. Flagged concepts are
-created and linked normally; review is optional cleanup the tutor does whenever
-they like, or never.
+created and linked normally; review is optional cleanup.
 
 ## Testing
-
-Every authorization rule gets a test, negatives included — the suite's existing
-discipline.
 
 **Authorization (negative):**
 - Tutor B cannot merge tutor A's concepts.
@@ -507,56 +287,138 @@ discipline.
 - Tutor B's concept list and clusters never include tutor A's rows.
 - A student reaching any concepts route is refused.
 
-**Unit:**
-- Connected-components grouping: transitive pairs form one cluster; rejected
-  pairs split a cluster; a fully-rejected cluster disappears.
+**Unit — normalisation.** The function is pure, so this is cheap and should be
+thorough. Each rule gets a case, drawn from the real corpus:
+`alcohol/alcohols`, `coulomb's law/coulomb’s law`, `ideal gas
+behavior/behaviour`, `Inverse Matrix/Matrix Inverse`, `batteries and fuel
+cells/fuel cells and batteries`.
+
+**Unit — negative normalisation.** The pairs that must NOT collide, also from
+the corpus: `nitrate/nitrite`, `alkanes/alkenes`, `acid dissociation
+constants/base dissociation constants`, `electric potential/electric potential
+energy`, `formation of carboxylic acids/reactions of carboxylic acids`. These
+are the regression guard on any future change to the normalisation rules.
+
+**Unit — clustering and merge:**
+- Groups of size 1 are dropped; a fully-rejected group is hidden; a group with
+  one unrejected pair is shown.
+- A new concept joining a previously-rejected group re-surfaces it.
 - Tombstone resolution: name → tombstone → survivor; a chain stays one hop after
   a second merge.
-- `conceptIdFor` reuses a live row, follows a tombstone, and creates only when
+- `conceptIdFor` reuses a live row, follows a tombstone, creates only when
   neither exists.
-- Merge repoints `topic_concepts` without violating the composite PK when the
+- Merge repoints `topic_concepts` without violating the composite PK when a
   topic already links to both concepts.
-- Concepts with `NULL` embeddings are excluded from clustering.
 
-**Not covered:** whether the threshold produces *good* clusters. That is a
-judgment call against real output, handled by the calibration step, not by an
-assertion.
+## Evidence
+
+Measured 2026-08-06 against the real 736-concept corpus (6 syllabuses; H2
+Mathematics, Chemistry and Physics). **This section is why the design is what it
+is. Read it before proposing embeddings again.**
+
+### Embeddings were tested properly first
+
+- `text-embedding-004` and `embedding-001` are **404** on `embedContent`. Only
+  `gemini-embedding-001` responds. An earlier draft specified the dead model.
+- `taskType: SEMANTIC_SIMILARITY` is load-bearing: without it the usable
+  threshold band is 0.008 wide; with it, 0.060 on a soft labelled set.
+- `gemini-embedding-2` is **worse**, not better — it cannot separate
+  morphological variants from sibling concepts at all, at either 768 or 3072
+  dimensions. Do not "upgrade".
+- 768 dimensions is forced regardless: pgvector's HNSW/IVFFlat indexes cap at
+  2000, so `gemini-embedding-001`'s native 3072 could never be indexed.
+
+### Descriptions in the embedding make it worse
+
+| Recipe | Morph min | Deep min | Sibling max | Band |
+|---|---|---|---|---|
+| Name only | 0.9545 | 0.8358 | 0.9470 | 0.0075 |
+| Name — description | 0.9109 | 0.9118 | 0.9246 | none |
+| Description only | 0.9084 | 0.9173 | 0.9208 | none |
+
+Deep synonyms converge (+0.076) but morphological variants degrade (−0.044),
+because two syllabuses describe the same concept in different words. Net, no
+band at all. (Descriptions here were hand-written for the test, not real Gemini
+output.)
+
+### Threshold calibration on the real corpus
+
+| Threshold | Clusters | Net reduction | Verdict |
+|---|---|---|---|
+| 0.93 | 143 | 307 | Merges `electric potential` with `gravitational potential` and `standard hydrogen electrode` |
+| 0.95 | 121 | 178 | Merges `nitrate` with `nitrite` (0.9516) |
+| 0.97 | 71 | 82 | Merges `electric potential` with `electric potential energy` |
+| **0.98** | **51** | **58** | No false positives found |
+
+### The comparison that decided it
+
+| | Clusters | Net reduction |
+|---|---|---|
+| Embeddings @ 0.98 | 51 | 58 |
+| **Normalised key** | **39** | **45** |
+
+Of the 66 pairs embeddings find at 0.98: **41 are exact matches after
+normalisation, 18 more fall to token overlap, and 7 need embeddings** — and most
+of those 7 are stemming (`enantiomerism/enantiomers`,
+`Formulating/Formulation`, `Interpretation/Interpreting`).
+
+Meanwhile the embedding **misses 11 pairs normalisation catches**, all trivially
+correct: `alcohol/alcohols` (0.9647), `carboxylic acid/carboxylic acids`
+(0.9764), `ionisation energies/ionisation energy` (0.9789), `order of
+reaction/orders of reaction` (0.9635).
+
+**Conclusion:** on this corpus the cheap method has better precision, better
+recall on plurals, no API cost, no extension, no threshold, and no failure mode.
+Embeddings add roughly 13 net merges for pgvector, a Gemini dependency in the
+write path, a backfill job, and a 0.008-wide threshold band.
+
+### Limits of this evidence
+
+Six syllabuses from roughly three real documents, all in mathematics, chemistry
+and physics. Repeated uploads of similar documents inflate the
+morphological-variant share. A humanities corpus, where synonymy is genuinely
+richer, might favour embeddings more — though note that deep synonyms were
+measured as **not separable at any safe threshold** (`chain rule ~
+differentiating composite functions` at 0.836 scores below `mean ~ median` at
+0.895), so that upside is largely unreachable regardless of corpus.
+
+## If embeddings are revisited
+
+Detection is one module behind one function signature. Adding embeddings later
+is a contained change, and the honest trigger for it is evidence — a tutor whose
+list is still cluttered after normalisation, with examples normalisation cannot
+reach. At that point:
+
+1. Re-run the corpus comparison above; do not assume it still holds.
+2. Prefer a **union** with normalisation, not a replacement — embeddings at a
+   safe threshold miss plurals that normalisation gets.
+3. `gemini-embedding-001`, `SEMANTIC_SIMILARITY`, 768 dimensions, threshold
+   0.98. Not `gemini-embedding-2`.
+4. Persisting `concepts.description` (Finding #7) is what makes a
+   description-based evaluation possible at all.
 
 ## Documentation to update in the same commit
 
-Per the working agreement:
-
-- `CLAUDE.md` — a "Concept deduplication" section next to "Syllabus extraction";
-  the vocabulary table gains **Cluster** and **Tombstone** if those names survive
-  implementation.
+- `CLAUDE.md` — a "Concept deduplication" section next to "Syllabus extraction".
+  **The pgvector/embedding carve-out added on 2026-08-06 should be narrowed back
+  out**, since nothing here uses it; the measurements above are the record of
+  why. The vocabulary table gains **Cluster** and **Tombstone** if those names
+  survive implementation.
 - `docs/status.md` — the new checkpoint; retire the stale "No Syllabi tab UI"
-  gap, which is already wrong; mark findings #3 and #7 resolved.
-- `docs/erd.txt` — the two new `concepts` columns and
-  `concept_merge_rejections`.
-- `docs/deploy.md` — pgvector must be enabled on the cloud Postgres, and the
-  worker needs no new env beyond what it already has.
+  gap, which is already wrong; mark finding #3 resolved, #7 if fixed.
+- `docs/erd.txt` — `concepts.merged_into_id` and `concept_merge_rejections`.
+- `docs/future-enhancements.md` — item 1 of "Syllabus Feature Enhancements" is
+  addressed; the embedding option is deferred with evidence, not dropped.
 
 ## Open risks
 
-1. ~~**Gemini embedding model availability.**~~ **Resolved 2026-08-06 by
-   running it.** `text-embedding-004` — which this draft originally specified —
-   is 404. `gemini-embedding-001` works, needs `taskType: SEMANTIC_SIMILARITY`
-   to be useful at all, and is truncated to 768 dimensions for indexability.
-2. **The threshold band is only 0.008 wide** (0.947 – 0.955), and corpus
-   calibration is a prerequisite. An earlier draft claimed 0.060 based on a
-   sibling set containing no hard cases; adding `sine rule ~ cosine rule`
-   (0.9470) collapsed it. Expect occasional false candidates; each costs one
-   rejection click, permanently.
-3. **Deep synonyms are out of reach.** Measured, not assumed: `chain rule ~
-   differentiating composite functions` (0.8358) and `derivative ~ rate of
-   change` score *below* sibling pairs that must not merge. Overlap is 0.11 —
-   not a tuning problem, a capability limit. The feature is a
-   morphological-variant detector. UI copy must not promise more.
-4. **Do not bump the embedding model.** `gemini-embedding-2` cannot separate
-   morphological variants from siblings at all. A well-meant upgrade silently
-   turns this feature into noise.
-4. **All-pairs clustering does not use the HNSW index.** Fine at 736, not fine
-   at 10k. The migration path is a lateral top-k ANN query — which is why the
-   768-dimension choice matters, since 3072 could never be indexed at all.
-5. **Undo is possible but not built.** If tutors merge wrongly and want it back,
-   that is follow-up work, and the merge dialog must not imply otherwise.
+1. **45 merges out of 736 concepts is an 8% reduction.** Modest. The feature's
+   value depends on tutors actually engaging with cluster review; if they do
+   not, no detection method would have helped.
+2. **The normalisation rules are hand-tuned to this corpus.** They generalise
+   reasonably (plurals, spelling, word order are subject-independent), but the
+   negative test cases are the guard, and new corpora may need new rules.
+3. **Undo is possible but not built.**
+4. **The crude singulariser will mangle some words** (`analysis` → `analysi`).
+   Harmless for clustering, since both sides normalise identically, but the key
+   must never be shown to a user or used as a display name.
