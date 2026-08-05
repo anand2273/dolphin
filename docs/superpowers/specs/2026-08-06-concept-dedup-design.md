@@ -81,6 +81,8 @@ Postgres extension, enabled in the migration.
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- 768, not gemini-embedding-001's native 3072: pgvector's HNSW/IVFFlat
+-- indexes cap at 2000 dimensions, and measured quality is identical.
 ALTER TABLE concepts
   ADD COLUMN embedding vector(768),
   ADD COLUMN merged_into_id uuid REFERENCES concepts(id) ON DELETE SET NULL;
@@ -263,30 +265,102 @@ embedding — that would give backfilled and new rows two different recipes in o
 vector space and make the thresholds meaningless. Persisting it now means a
 future re-embed with descriptions has data to work with.
 
-## Embedding model
+## Embedding model — verified 2026-08-06
 
-Gemini `text-embedding-004`, 768 dimensions, called from `worker/` through the
-`@google/generative-ai` client already in `dependencies`.
+**`gemini-embedding-001`, `taskType: SEMANTIC_SIMILARITY`,
+`outputDimensionality: 768`.** Called from `worker/` through the
+`@google/generative-ai` client already in `dependencies`. Batch through
+`batchEmbedContents`, verified working for 7 inputs in one call.
 
-Per CLAUDE.md's model-gotchas section, **verify the model responds before
-building on it** — dated Gemini names are actively being sunset and
-`ListModels` is not proof of availability. The dimension is baked into the
-column type, so changing model later means a column change plus a full
-re-embed. Confirm the model and its dimension before writing the migration.
+Three things were established by running it, not by reasoning:
 
-Batch through `batchEmbedContents` rather than one call per name.
+**`text-embedding-004` is dead** — 404 on `embedContent`. So is `embedding-001`.
+This draft originally named `text-embedding-004`; it would have failed on first
+run. Exactly the trap CLAUDE.md's model-gotchas section describes. `ListModels`
+reports only `gemini-embedding-001`, `gemini-embedding-2-preview` and
+`gemini-embedding-2`.
+
+**`taskType: SEMANTIC_SIMILARITY` is mandatory, not a nicety.** It is the
+difference between a usable band and no band at all. Measured on a labelled set
+of 6 should-merge and 6 should-not-merge pairs, the gap between the weakest
+true duplicate and the strongest true distinct:
+
+| Config | Usable threshold band |
+|---|---|
+| No `taskType` | 0.7274 – 0.7357 — **0.008 wide, unusable** |
+| `SEMANTIC_SIMILARITY`, 3072d | 0.8973 – 0.9562 — 0.059 wide |
+| `SEMANTIC_SIMILARITY`, 768d | 0.8949 – 0.9545 — 0.060 wide |
+
+(Bands exclude one deep-synonym pair; see the section below.)
+
+**768 dimensions, not the native 3072.** Two reasons. Quality is
+indistinguishable — the band is the same to three decimal places. And pgvector's
+HNSW and IVFFlat indexes **cap at 2000 dimensions**, so a 3072-d column can be
+stored but never indexed, permanently foreclosing the top-k migration path.
+`outputDimensionality: 768` is Matryoshka truncation and is verified working.
+
+The dimension is baked into the column type; changing it later means a column
+change plus a full re-embed.
+
+## What this catches, and what it does not
+
+Measured, not assumed. This bounds what the feature can honestly promise.
+
+**Caught reliably** — surface and morphological variants, all ≥ 0.954:
+
+```
+0.9952  quadratic formula        ~  the quadratic formula
+0.9922  chain rule               ~  the chain rule
+0.9742  simultaneous equations   ~  solving simultaneous equations
+0.9618  completing the square    ~  method of completing the square
+0.9545  vectors                  ~  vector geometry
+```
+
+Every one of these is invisible to today's exact-string matching. This is the
+feature's real value.
+
+**Correctly left alone** — sibling concepts, all ≤ 0.895:
+
+```
+0.8949  mean          ~  median
+0.8887  algebra       ~  trigonometry
+0.8497  differentiation ~ integration
+0.7925  quadratic formula ~ photosynthesis
+```
+
+**Not caught** — deep synonyms with no shared vocabulary:
+
+```
+0.8358  chain rule  ~  differentiating composite functions
+```
+
+This scores *below* `mean ~ median` (0.8949). **No threshold catches the deep
+synonym without also merging mean into median**, which would be a destructive
+false positive on curated data. So the honest scope is: this feature catches
+morphological variants, not conceptual synonyms. A tutor who writes
+"differentiating composite functions" in one syllabus and "chain rule" in
+another still ends up with two concepts.
+
+That is a real limitation and it should not be papered over in the UI copy. It
+is also fine: morphological variants are the bulk of what an LLM extracting the
+same subject from different documents actually produces.
 
 ## Threshold and calibration
 
-The similarity threshold is a **tunable constant, not a settled number.** Any
-value stated now is a guess.
+Cosine similarity **0.93** — the midpoint of the measured band (0.8949 –
+0.9545) at 768 dimensions with `SEMANTIC_SIMILARITY`.
 
-Start at cosine similarity **0.88**, then calibrate against the real 736-concept
-corpus with a throwaway script before shipping: dump the pairs each candidate
-threshold produces and read them. Too low floods the tutor with junk clusters
-and the feature gets ignored; too high and it finds nothing and the feature is
-pointless. This is the single highest-risk unknown in the design, and it cannot
-be resolved by reasoning — only by looking at output.
+**Tune upward, not downward, when in doubt.** The costs are asymmetric: a false
+positive spends tutor attention and, if rubber-stamped, destroys curated data;
+a false negative just leaves a duplicate in place, which is exactly the status
+quo. Precision over recall.
+
+The band above comes from 12 hand-labelled pairs, which is enough to establish
+that a band exists and roughly where — not enough to fix the constant. Before
+shipping, run a calibration script over the real 736-concept corpus, dump the
+clusters each candidate value produces, and read them. `mean ~ median` at 0.8949
+is the canary: any threshold at or below the sibling band floods the tutor with
+false clusters and the feature gets ignored.
 
 Store the constant in one module alongside the other tunables, not inline at the
 query.
@@ -390,11 +464,19 @@ Per the working agreement:
 
 ## Open risks
 
-1. **Threshold quality is unknown** until calibrated against the real corpus.
-   Highest risk in the design; unresolvable by reasoning.
-2. **Gemini embedding model availability** — verify before the migration bakes a
-   dimension into the column type.
-3. **All-pairs clustering does not use the HNSW index.** Fine at 736, not fine
-   at 10k. The migration path is a lateral top-k ANN query.
-4. **Undo is possible but not built.** If tutors merge wrongly and want it back,
+1. ~~**Gemini embedding model availability.**~~ **Resolved 2026-08-06 by
+   running it.** `text-embedding-004` — which this draft originally specified —
+   is 404. `gemini-embedding-001` works, needs `taskType: SEMANTIC_SIMILARITY`
+   to be useful at all, and is truncated to 768 dimensions for indexability.
+2. **Threshold still needs corpus calibration.** A band is now measured (0.895 –
+   0.955) and 0.93 is a defensible starting point, but 12 hand-labelled pairs
+   only prove the band exists. Confirm against the real 736 before shipping.
+3. **Deep synonyms are out of reach.** Measured, not assumed: no threshold
+   catches `chain rule ~ differentiating composite functions` without also
+   merging `mean` into `median`. The feature is a morphological-variant
+   detector. UI copy must not promise more.
+4. **All-pairs clustering does not use the HNSW index.** Fine at 736, not fine
+   at 10k. The migration path is a lateral top-k ANN query — which is why the
+   768-dimension choice matters, since 3072 could never be indexed at all.
+5. **Undo is possible but not built.** If tutors merge wrongly and want it back,
    that is follow-up work, and the merge dialog must not imply otherwise.
