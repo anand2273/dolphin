@@ -209,8 +209,28 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
   because this model was reproduced going into a degenerate repetition loop —
   one field ballooning to ~49k tokens of repeated filler while still producing
   syntactically valid JSON that would otherwise pass validation silently.
-  Zod's per-field `.max()` length caps exist for the same reason: a
-  finishReason of `STOP` alone doesn't guarantee sane content.
+  A `STOP` finishReason alone does not guarantee sane content.
+- **Size caps and the degeneracy guard are deliberately separate — do not
+  collapse them** (*reworked 2026-08-05*). `MAX_TOPICS` / `MAX_CONCEPTS_PER_TOPIC`
+  and the Zod `.max()` lengths are generous and merely *truncate*; `isDegenerate`
+  is what actually rejects a repetition loop, by detecting duplication (mostly
+  repeated names, or a long field made of a handful of distinct tokens) rather
+  than by size. The earlier design used tight caps as the guard, which is wrong
+  in both directions: a cap tight enough to catch degenerate output also
+  permanently drops a legitimately dense chunk, and re-running at
+  `temperature: 0` reproduces the same rejection. Degeneracy throws (retryable);
+  oversize trims.
+- **There is deliberately no `sourceText` / verbatim-quote field on topics**
+  (*tried and removed 2026-08-05*). A quote is only worth its output tokens if
+  something can check it against the document, and nothing here can:
+  `pdf-chunk.ts` slices pages as binary via `pdf-lib`, which has no text
+  extraction API, and of the accepted MIME types only `text/plain` yields usable
+  text from `fileBytes`. Requiring an unverifiable quote spends `maxOutputTokens`
+  budget and loses legitimate topics — worst on scanned PDFs, where the model
+  reads rendered images and may not reproduce a line character-for-character.
+  If hallucinated topics show up in real output, add a text-extraction pass
+  (`pdfjs-dist` `getTextContent()`, `mammoth` for `.docx`) carried alongside the
+  bytes through the chunk boundary *first*, then reintroduce the field.
 - **Schema-level per-field `description`s and marking `concepts` required in
   the `responseSchema` are also load-bearing.** Without them, the model was
   observed flattening a topic's own concepts into sibling top-level topics,

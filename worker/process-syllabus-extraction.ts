@@ -22,7 +22,7 @@ const PDF_MIME_TYPE = "application/pdf";
  * kept as a duplicate. Concepts are merged the same way within a matched
  * topic.
  */
-function mergeExtractionResults(
+export function mergeExtractionResults(
   chunkResults: SyllabusExtractionResult[],
 ): SyllabusExtractionResult {
   const topics: SyllabusExtractionResult["topics"] = [];
@@ -35,18 +35,18 @@ function mergeExtractionResults(
 
       if (existingIndex === undefined) {
         topicIndexByName.set(topicKey, topics.length);
-        topics.push({ ...extractedTopic, concepts: [...(extractedTopic.concepts ?? [])] });
+        topics.push({ ...extractedTopic, concepts: [...extractedTopic.concepts] });
         continue;
       }
 
       const existingTopic = topics[existingIndex];
       const conceptNames = new Set(
-        (existingTopic.concepts ?? []).map((c) => c.name.toLowerCase()),
+        existingTopic.concepts.map((c) => c.name.toLowerCase()),
       );
-      for (const concept of extractedTopic.concepts ?? []) {
+      for (const concept of extractedTopic.concepts) {
         if (conceptNames.has(concept.name.toLowerCase())) continue;
         conceptNames.add(concept.name.toLowerCase());
-        existingTopic.concepts = [...(existingTopic.concepts ?? []), concept];
+        existingTopic.concepts = [...existingTopic.concepts, concept];
       }
     }
   }
@@ -215,7 +215,7 @@ export async function processSyllabusExtraction(
           topicId = created.id;
         }
 
-        for (const extractedConcept of extractedTopic.concepts ?? []) {
+        for (const extractedConcept of extractedTopic.concepts) {
           const conceptId = await conceptIdFor(extractedConcept.name);
           await tx
             .insert(topicConcepts)
