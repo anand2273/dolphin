@@ -45,7 +45,7 @@ ranks candidates. The tutor decides. Nothing merges on its own, ever.
 | Review unit | Cluster, pick a survivor | Real duplication is 3–4 variants of one idea, not isolated pairs; pairwise votes can contradict each other |
 | Academic level | One concept, level derived | `syllabuses.level` already exists; a concept's levels are a join. Zero schema cost, and difficulty belongs on the question |
 | Review home | Concepts destination + syllabus banner | Backfill clusters span syllabuses and belong to no single one |
-| Embedding input | Name only | One recipe for every vector. The 736 existing rows have no description, so mixing name and name+description would make scores incomparable |
+| Embedding input | Name only | Measured: adding descriptions destroys the band entirely. See below |
 | Merge model | Tombstone `merged_into_id` | Survives re-extraction, gives undo, preserves provenance |
 | Cluster storage | Derived on read | Nothing to invalidate |
 
@@ -302,6 +302,21 @@ stored but never indexed, permanently foreclosing the top-k migration path.
 The dimension is baked into the column type; changing it later means a column
 change plus a full re-embed.
 
+**`gemini-embedding-2` is measurably worse — do not "upgrade" to it.** Tested
+on the same labelled set, the newer model cannot separate morphological variants
+from sibling concepts at all, where `001` can (narrowly). Both the preview and
+GA variants score identically, at 768 and at native 3072.
+
+| Model @768 | Morph min | Sibling max | Morph separable? |
+|---|---|---|---|
+| `gemini-embedding-001` | 0.9545 | 0.9470 | **yes**, band 0.947–0.955 |
+| `gemini-embedding-2` | 0.8776 | 0.9044 | no, overlap 0.027 |
+| `gemini-embedding-2-preview` | 0.8776 | 0.9044 | no, overlap 0.027 |
+
+If someone later bumps the model on the assumption that a higher number is
+better, this feature silently degrades into noise. Re-run the labelled-set
+comparison before changing it.
+
 ## What this catches, and what it does not
 
 Measured, not assumed. This bounds what the feature can honestly promise.
@@ -319,14 +334,22 @@ Measured, not assumed. This bounds what the feature can honestly promise.
 Every one of these is invisible to today's exact-string matching. This is the
 feature's real value.
 
-**Correctly left alone** — sibling concepts, all ≤ 0.895:
+**Correctly left alone** — sibling concepts. The ceiling here is what sets the
+threshold, and it is **much higher than a casual sample suggests**:
 
 ```
+0.9470  sine rule     ~  cosine rule        ← the real ceiling
 0.8949  mean          ~  median
 0.8887  algebra       ~  trigonometry
 0.8497  differentiation ~ integration
 0.7925  quadratic formula ~ photosynthesis
 ```
+
+`sine rule ~ cosine rule` at 0.9470 is the case that matters: two concepts that
+sit adjacent in any trigonometry syllabus, share a token, and must never merge.
+An earlier draft of this spec put the sibling ceiling at 0.895 and claimed a
+0.060-wide band. That was an artefact of a sibling set with no hard cases in it.
+**The real band is 0.947 – 0.955 — 0.008 wide.**
 
 **Not caught** — deep synonyms with no shared vocabulary:
 
@@ -345,22 +368,73 @@ That is a real limitation and it should not be papered over in the UI copy. It
 is also fine: morphological variants are the bulk of what an LLM extracting the
 same subject from different documents actually produces.
 
+## Why descriptions stay out of the embedding — measured 2026-08-06
+
+The original reason for name-only was consistency: the 736 existing rows have no
+description, so mixing recipes would make scores incomparable. That reason is
+real but weak — descriptions could have been backfilled by re-extraction, since
+the source documents are still in storage and `retrySyllabusExtraction` is
+already idempotent.
+
+So it was tested directly, embedding `name — description` against `name` alone
+on the same labelled set:
+
+| Recipe | Morph min | Deep min | Sibling max | Usable band |
+|---|---|---|---|---|
+| **Name only** | 0.9545 | 0.8358 | 0.9470 | **0.0075** |
+| Name — description | 0.9109 | 0.9118 | 0.9246 | none, overlap 0.0136 |
+| Description only | 0.9084 | 0.9173 | 0.9208 | none, overlap 0.0124 |
+
+Half the hypothesis held and half did not, which is why this needed measuring:
+
+- **Deep synonyms converge sharply**, +0.076 (0.836 → 0.912). Descriptions do
+  capture what the names fail to share.
+- **Siblings barely separate**, −0.022. `sine rule` and `cosine rule` have
+  genuinely different descriptions, and it was not nearly enough — both still
+  read as "relates the sides of a triangle to its angles".
+- **Morphological variants degrade**, −0.044. This is the killer, and it is
+  intrinsic: two syllabuses describing the same concept phrase it differently,
+  and that phrasing variance pushes apart the very pairs the feature exists to
+  catch.
+
+Net, descriptions turn a narrow-but-real band into no band at all. **Name only
+stands, now for an empirical reason rather than a procedural one.**
+
+**Caveat on this result.** The descriptions used were written by hand for the
+test, not produced by Gemini from a real document. The direction and effect
+sizes are clear enough to decide on, but if deep-synonym detection ever becomes
+a priority, re-run this against real extracted descriptions before concluding.
+Descriptions are the obvious lever for that problem — they just cannot be
+applied as a naive concatenation, because they cost more on morphological pairs
+than they gain on deep ones.
+
 ## Threshold and calibration
 
-Cosine similarity **0.93** — the midpoint of the measured band (0.8949 –
-0.9545) at 768 dimensions with `SEMANTIC_SIMILARITY`.
+Cosine similarity **0.95**, sitting in the measured band 0.9470 – 0.9545 at 768
+dimensions with `SEMANTIC_SIMILARITY` on `gemini-embedding-001`.
 
-**Tune upward, not downward, when in doubt.** The costs are asymmetric: a false
-positive spends tutor attention and, if rubber-stamped, destroys curated data;
-a false negative just leaves a duplicate in place, which is exactly the status
-quo. Precision over recall.
+**The band is 0.008 wide. This is the design's weakest point and it must not be
+glossed over.** It works on the labelled set — every morphological variant
+clears 0.95, every sibling including `sine rule ~ cosine rule` falls below it —
+but there is almost no margin. A pair slightly harder than anything tested will
+land on the wrong side.
 
-The band above comes from 12 hand-labelled pairs, which is enough to establish
-that a band exists and roughly where — not enough to fix the constant. Before
-shipping, run a calibration script over the real 736-concept corpus, dump the
-clusters each candidate value produces, and read them. `mean ~ median` at 0.8949
-is the canary: any threshold at or below the sibling band floods the tutor with
-false clusters and the feature gets ignored.
+Two things keep that acceptable rather than fatal:
+
+1. **Nothing merges without the tutor.** A false positive costs one "not
+   duplicates" click, not data. And because rejections are stored pairwise and
+   permanently, each false positive is a **one-time** annoyance — it never
+   appears again.
+2. **Tune upward when in doubt.** The costs are asymmetric: a false positive
+   spends tutor attention and, if rubber-stamped, destroys curated data; a false
+   negative just leaves a duplicate in place, which is the status quo. Precision
+   over recall.
+
+**Calibration against the real 736-concept corpus is now a prerequisite, not a
+nice-to-have.** With a 0.008 band, a constant chosen from 21 hand-labelled pairs
+is not trustworthy on its own. Dump the clusters each candidate value produces
+and read them before shipping. `sine rule ~ cosine rule` at 0.9470 is the
+canary — if it ever appears as a candidate, the threshold is too low.
 
 Store the constant in one module alongside the other tunables, not inline at the
 query.
@@ -468,13 +542,19 @@ Per the working agreement:
    running it.** `text-embedding-004` — which this draft originally specified —
    is 404. `gemini-embedding-001` works, needs `taskType: SEMANTIC_SIMILARITY`
    to be useful at all, and is truncated to 768 dimensions for indexability.
-2. **Threshold still needs corpus calibration.** A band is now measured (0.895 –
-   0.955) and 0.93 is a defensible starting point, but 12 hand-labelled pairs
-   only prove the band exists. Confirm against the real 736 before shipping.
-3. **Deep synonyms are out of reach.** Measured, not assumed: no threshold
-   catches `chain rule ~ differentiating composite functions` without also
-   merging `mean` into `median`. The feature is a morphological-variant
-   detector. UI copy must not promise more.
+2. **The threshold band is only 0.008 wide** (0.947 – 0.955), and corpus
+   calibration is a prerequisite. An earlier draft claimed 0.060 based on a
+   sibling set containing no hard cases; adding `sine rule ~ cosine rule`
+   (0.9470) collapsed it. Expect occasional false candidates; each costs one
+   rejection click, permanently.
+3. **Deep synonyms are out of reach.** Measured, not assumed: `chain rule ~
+   differentiating composite functions` (0.8358) and `derivative ~ rate of
+   change` score *below* sibling pairs that must not merge. Overlap is 0.11 —
+   not a tuning problem, a capability limit. The feature is a
+   morphological-variant detector. UI copy must not promise more.
+4. **Do not bump the embedding model.** `gemini-embedding-2` cannot separate
+   morphological variants from siblings at all. A well-meant upgrade silently
+   turns this feature into noise.
 4. **All-pairs clustering does not use the HNSW index.** Fine at 736, not fine
    at 10k. The migration path is a lateral top-k ANN query — which is why the
    768-dimension choice matters, since 3072 could never be indexed at all.
