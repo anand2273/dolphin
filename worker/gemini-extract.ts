@@ -183,7 +183,7 @@ export async function extractTopicsAndConcepts(input: {
         "contain, and do not use knowledge of the subject beyond this excerpt's " +
         "literal text. If this excerpt contains no clearly stated topic content " +
         "(e.g. it is a cover page, table of contents, administrative text, or " +
-        "otherwise inconclusive), return an empty topics array rather than a " +
+        "otherwise inconclusive), or any other form of content overview, return an empty topics array rather than a " +
         "best guess. The same applies if this excerpt consists only of assumed " +
         "or prerequisite knowledge, or of content marked as excluded — an " +
         "excerpt can be entirely such material, and the correct answer is then " +
