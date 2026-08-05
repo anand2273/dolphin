@@ -18,7 +18,14 @@ v1 is a **session-centric file and homework system**. The AI layer (material gen
 
 Auto-marking, analytics dashboards, note editing, payments or invoicing, calendar sync, scheduling, notifications beyond one transactional email, in-app messaging, mobile apps, multi-tutor agencies or orgs, admin panels.
 
-**LLM calls are permitted for exactly one purpose**: mining topics and concepts out of a tutor-uploaded syllabus document (see Syllabus below). *Decided 2026-08: this is the one deliberate exception to the original "no LLM calls of any kind" rule — the syllabus-creation stage is the next thing being built after v1, not part of v1 itself.* No other AI feature (auto-marking, generation, analytics) is in scope until each is separately greenlit.
+**LLM calls are permitted for exactly two purposes**, both belonging to the syllabus stage rather than to v1 itself:
+
+1. **Mining topics and concepts out of a tutor-uploaded syllabus document** (see Syllabus below). *Decided 2026-08: the first deliberate exception to the original "no LLM calls of any kind" rule — the syllabus-creation stage is the next thing being built after v1, not part of v1 itself.*
+2. **Embedding concept names/descriptions to surface duplicate candidates** across a tutor's syllabi (see Concept deduplication below). *Decided 2026-08-06.* Concepts are tutor-global and persist across every syllabus that tutor uploads, so near-duplicates accumulate with each upload and quietly destroy the cross-syllabus aggregation the concept table exists to provide. Exact-string matching cannot fix this; synonymy is the whole problem.
+
+**Similarity never merges anything on its own.** It ranks candidates; the tutor decides whether two concepts are one. This is the same draft-then-approve contract homework question sets carry — the model proposes, the tutor disposes.
+
+No other AI feature (auto-marking, generation, analytics, retrieval over materials) is in scope until each is separately greenlit.
 
 If a task appears to require any of the above, **stop and ask** rather than building a partial version.
 
@@ -315,6 +322,11 @@ precedent for adding AI tooling elsewhere without asking again):
 - `pdf-lib` — only ever imported from `worker/pdf-chunk.ts`, used to slice an
   uploaded PDF into page-range sub-documents for structural chunking (see
   Syllabus extraction above)
+- **`pgvector`** (2026-08-06) — a Postgres extension, not an npm package, and the
+  only vector storage in this project. It exists for concept-duplicate detection
+  and nothing else: no RAG over materials, no embeddings of submissions, no
+  semantic search. Embeddings are produced in `worker/` via the Gemini SDK
+  already listed above — no separate embeddings vendor or client library.
 - The `worker/` process runs on **Railway**; Redis is **Upstash** (`rediss://`,
   TLS — the Vercel→Redis leg crosses the public internet, and queue-write is an
   authorization boundary because the worker trusts the ids in a job payload).
@@ -408,7 +420,11 @@ Cheap to add now, expensive to add later. Add the columns/tables; **do not** bui
 - A `topics` table plus an `assignment_topics` join, tutor-tagged and optional. Without topic tags there is nothing for later analytics to aggregate on — this is the single most valuable hook in this list.
 - An append-only `events` table (`actor_id`, `verb`, `subject_type`, `subject_id`, `occurred_at`, `payload jsonb`) written on upload, issue, submit and grade.
 
-Do **not** add LLM SDKs, vector stores, or embedding columns in v1.
+Do **not** add LLM SDKs, vector stores, or embedding columns in v1. *Narrowed
+2026-08-06:* the syllabus stage now carries the Gemini SDK and a pgvector column
+on concepts, both greenlit above and both scoped to that stage. The rule still
+holds everywhere else — an embedding of a submission, a material, or a question
+is not covered by that carve-out and needs its own greenlight.
 
 ## Testing
 
