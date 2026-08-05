@@ -14,6 +14,10 @@ import { createTestUser, deleteTestUser, type TestUser } from "./helpers/seed";
 
 // A stand-in cookie jar. next/headers' cookies() only works inside a request.
 const jar = new Map<string, string>();
+// headers() returns an empty set, so getAuthUser finds no forwarded identity
+// and falls back to a real auth.getUser() — the path these tests drive via
+// signedInAs(). See lib/auth/identity-headers.ts.
+const requestHeaders = new Map<string, string>();
 vi.mock("next/headers", () => ({
   cookies: async () => ({
     get: (name: string) =>
@@ -24,6 +28,9 @@ vi.mock("next/headers", () => ({
     delete: (name: string) => {
       jar.delete(name);
     },
+  }),
+  headers: async () => ({
+    get: (name: string) => requestHeaders.get(name.toLowerCase()) ?? null,
   }),
 }));
 

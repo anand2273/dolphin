@@ -43,3 +43,10 @@ next-env.d.ts
 /test-results
 /playwright-report
 /.playwright
+/.playwright-mcp
+
+# claude code — personal config and scratch worktrees only. A shared
+# .claude/settings.json (or project skills) is worth committing, so this is
+# deliberately not a blanket /.claude/ ignore.
+/.claude/settings.local.json
+/.claude/worktrees/
