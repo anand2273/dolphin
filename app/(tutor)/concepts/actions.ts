@@ -62,10 +62,12 @@ export async function mergeConcepts(
         .set({ deletedAt: new Date(), mergedIntoId: survivorId, updatedAt: new Date() })
         .where(eq(concepts.id, loserId));
 
-      // Any tombstone already pointing at this loser now points at the
-      // survivor, so resolution is always exactly one hop and needs no loop
-      // guard. Must run after the update above, which is what stops the loser
-      // matching its own predicate.
+      // Repoints any pre-existing tombstone that already pointed at this
+      // loser (an earlier merge chain) at the new survivor instead, so
+      // resolution is always exactly one hop and needs no loop guard. Order
+      // relative to the tombstone update above doesn't matter for
+      // well-formed input: pre-merge the loser's mergedIntoId is NULL, so it
+      // can't match this statement's WHERE clause either way.
       await tx
         .update(concepts)
         .set({ mergedIntoId: survivorId })
@@ -109,6 +111,16 @@ export async function rejectCluster(
     return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   const conceptIds = [...new Set(parsed.data.conceptIds)];
+
+  // The schema's `.min(2)` ran on the pre-dedupe list, so it doesn't catch a
+  // submission that only looked like a real cluster: duplicate ids in the
+  // form, or two ids that differed only by UUID case before the schema's
+  // lowercase normalisation collapsed them to the same value. Deduping can
+  // still fold the set below 2, and a single concept has no pair to record —
+  // check before authorizing so a doomed request doesn't cost a DB round trip.
+  if (conceptIds.length < 2) {
+    return { error: "A cluster needs at least two concepts" };
+  }
 
   const user = await requireAuthUser();
   try {
