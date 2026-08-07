@@ -15,8 +15,9 @@ describe("normalisedKey — pairs that MUST cluster", () => {
   });
 
   it("collapses apostrophe styles", () => {
-    same("coulomb's law", "coulomb's law");
-    same("newton's law of gravitation", "newton's law of gravitation");
+    same("coulomb's law", "coulomb’s law");
+    same("newton's law of gravitation", "newton’s law of gravitation");
+    expect("coulomb's law").not.toBe("coulomb’s law");
   });
 
   it("collapses British and American spelling", () => {

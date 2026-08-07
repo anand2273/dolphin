@@ -41,7 +41,7 @@ export function normalisedKey(name: string): string {
     .toLowerCase()
     // Curly and back quotes are a real source of duplicates: the extraction
     // model emits both "coulomb's law" and "coulomb's law".
-    .replace(/[''`]/g, "'")
+    .replace(/[‘’`]/g, "'")
     .replace(/'s\b/g, "")
     .replace(/'/g, "")
     .replace(/[^a-z0-9 ]+/g, " ")
