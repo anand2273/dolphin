@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import {
   attachments,
@@ -128,20 +128,22 @@ export async function processSyllabusExtraction(
     }
 
     await db.transaction(async (tx) => {
-      // Concepts are tutor-scoped and may already exist (from another syllabus
-      // or a previous extraction); reuse the live row under the same name
-      // rather than creating a duplicate. Matched case-insensitively because
-      // concepts_tutor_name_live_uidx (lib/db/schema.ts) is a case-insensitive
-      // unique index on (tutor_id, lower(name)) — a case-sensitive lookup here
-      // can miss an existing row that differs only in case and then collide
-      // with that same index on insert.
+      // Concepts are tutor-scoped and may already exist (from another
+      // syllabus or a previous extraction); reuse rather than duplicate.
       const conceptIdByName = new Map<string, string>();
-      async function conceptIdFor(name: string): Promise<string> {
+      async function conceptIdFor(
+        name: string,
+        description?: string,
+      ): Promise<string> {
         const key = name.toLowerCase();
         const cached = conceptIdByName.get(key);
         if (cached) return cached;
 
-        const [existing] = await tx
+        // 1. A live concept under this name. Matched case-insensitively
+        // because concepts_tutor_name_live_uidx is on (tutor_id, lower(name)) —
+        // a case-sensitive lookup misses a row differing only in case and then
+        // collides with that index on insert.
+        const [live] = await tx
           .select({ id: concepts.id })
           .from(concepts)
           .where(
@@ -152,17 +154,71 @@ export async function processSyllabusExtraction(
             ),
           )
           .limit(1);
-        if (existing) {
-          conceptIdByName.set(key, existing.id);
-          return existing.id;
+        if (live) {
+          conceptIdByName.set(key, live.id);
+          return live.id;
         }
 
+        // 2. A tombstone: this name was merged away by the tutor. Follow the
+        // pointer instead of recreating the row.
+        //
+        // Load-bearing. concepts_tutor_name_live_uidx is PARTIAL on
+        // "deleted_at is null", so without this a merged-away name has no live
+        // row, gets recreated here, and the tutor is proposed the identical
+        // merge after every future upload. Merges repoint tombstones at the new
+        // survivor, so this is always one hop — no loop needed.
+        const [tombstone] = await tx
+          .select({ mergedIntoId: concepts.mergedIntoId })
+          .from(concepts)
+          .where(
+            and(
+              eq(concepts.tutorId, syllabus.tutorId),
+              sql`lower(${concepts.name}) = ${key}`,
+              isNotNull(concepts.deletedAt),
+              isNotNull(concepts.mergedIntoId),
+            ),
+          )
+          .orderBy(desc(concepts.updatedAt))
+          .limit(1);
+        if (tombstone?.mergedIntoId) {
+          conceptIdByName.set(key, tombstone.mergedIntoId);
+          return tombstone.mergedIntoId;
+        }
+
+        // 3. Create. onConflictDoNothing + re-select rather than a bare insert:
+        // the worker runs concurrency 2, so two jobs for one tutor can both
+        // miss the select above and collide on the unique index (23505), which
+        // aborts the whole transaction and fails a job that has already paid
+        // for every Gemini call in the document.
         const [created] = await tx
           .insert(concepts)
-          .values({ tutorId: syllabus.tutorId, name })
+          .values({
+            tutorId: syllabus.tutorId,
+            name,
+            description: description ?? null,
+          })
+          .onConflictDoNothing()
           .returning({ id: concepts.id });
-        conceptIdByName.set(key, created.id);
-        return created.id;
+
+        if (created) {
+          conceptIdByName.set(key, created.id);
+          return created.id;
+        }
+
+        const [raced] = await tx
+          .select({ id: concepts.id })
+          .from(concepts)
+          .where(
+            and(
+              eq(concepts.tutorId, syllabus.tutorId),
+              sql`lower(${concepts.name}) = ${key}`,
+              isNull(concepts.deletedAt),
+            ),
+          )
+          .limit(1);
+        if (!raced) throw new Error(`Could not resolve concept "${name}"`);
+        conceptIdByName.set(key, raced.id);
+        return raced.id;
       }
 
       // Re-extraction (a retry, or a second document on the same syllabus) has
@@ -216,7 +272,10 @@ export async function processSyllabusExtraction(
         }
 
         for (const extractedConcept of extractedTopic.concepts) {
-          const conceptId = await conceptIdFor(extractedConcept.name);
+          const conceptId = await conceptIdFor(
+            extractedConcept.name,
+            extractedConcept.description,
+          );
           await tx
             .insert(topicConcepts)
             .values({ topicId, conceptId })
