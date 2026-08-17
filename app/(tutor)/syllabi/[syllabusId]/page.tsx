@@ -120,11 +120,13 @@ export default async function SyllabusPage({
         <div className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3">
           <span className="text-sm text-muted-foreground">
             {clusters.length} {clusters.length === 1 ? "group" : "groups"} of
-            your concepts look like duplicates.
+            your concepts {clusters.length === 1 ? "looks" : "look"} like
+            duplicates.
           </span>
           <Link
             href="/concepts"
             className="ml-auto text-sm font-medium text-primary underline underline-offset-2"
+            aria-label="Review duplicate concept groups"
           >
             Review
           </Link>
