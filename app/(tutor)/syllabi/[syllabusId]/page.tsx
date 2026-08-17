@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireAuthUser } from "@/lib/auth/session";
 import { assertSyllabusOwner, AuthzError } from "@/lib/auth/authz";
@@ -5,6 +6,7 @@ import {
   listConceptsForTutor,
   listTopicsForSyllabus,
 } from "@/lib/db/queries/syllabuses";
+import { listConceptClustersForTutor } from "@/lib/db/queries/concepts";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { Notice } from "@/components/notice";
 import { resolveNotice } from "@/lib/notices";
@@ -45,9 +47,10 @@ export default async function SyllabusPage({
     throw e;
   }
 
-  const [topics, allConcepts] = await Promise.all([
+  const [topics, allConcepts, clusters] = await Promise.all([
     listTopicsForSyllabus(user.id, syllabusId),
     listConceptsForTutor(user.id),
+    listConceptClustersForTutor(user.id),
   ]);
 
   return (
@@ -110,6 +113,21 @@ export default async function SyllabusPage({
               take a minute.
             </span>
           )}
+        </div>
+      )}
+
+      {clusters.length > 0 && (
+        <div className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3">
+          <span className="text-sm text-muted-foreground">
+            {clusters.length} {clusters.length === 1 ? "group" : "groups"} of
+            your concepts look like duplicates.
+          </span>
+          <Link
+            href="/concepts"
+            className="ml-auto text-sm font-medium text-primary underline underline-offset-2"
+          >
+            Review
+          </Link>
         </div>
       )}
 
