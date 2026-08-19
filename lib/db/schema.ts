@@ -597,6 +597,17 @@ export const conceptMergeRejections = pgTable(
   (t) => [
     primaryKey({ columns: [t.conceptAId, t.conceptBId] }),
     index("concept_merge_rejections_tutor_id_idx").on(t.tutorId),
+    // The canonical order every writer and reader of this table assumes:
+    // rejectCluster sorts each pair before inserting and pairKey() sorts
+    // before looking one up, so an unordered row would be invisible to the
+    // lookup that is supposed to find it. Declared here — and hand-added to
+    // 0003's snapshot — because 0003 already shipped it as raw SQL; without
+    // the snapshot entry the next db:generate would emit a duplicate
+    // ADD CONSTRAINT that fails on every environment that ran 0003.
+    check(
+      "concept_merge_rejections_ordered",
+      sql`${t.conceptAId} < ${t.conceptBId}`,
+    ),
   ],
 );
 

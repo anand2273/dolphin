@@ -618,7 +618,12 @@
       },
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "concept_merge_rejections_ordered": {
+          "name": "concept_merge_rejections_ordered",
+          "value": "\"concept_merge_rejections\".\"concept_a_id\" < \"concept_merge_rejections\".\"concept_b_id\""
+        }
+      },
       "isRLSEnabled": false
     },
     "public.concepts": {
