@@ -164,6 +164,11 @@ export async function mergeConcepts(
   if (!outcome.ok) return outcome;
 
   revalidatePath("/concepts");
+  // The syllabus detail page carries its own duplicate-cluster banner, so a
+  // merge leaves a stale count there unless this dynamic segment is
+  // revalidated too — the literal segment name, not a resolved id, because a
+  // merge is not scoped to one syllabus.
+  revalidatePath("/syllabi/[syllabusId]", "page");
   return { ok: true };
 }
 
@@ -210,5 +215,7 @@ export async function rejectCluster(
   await db.insert(conceptMergeRejections).values(rows).onConflictDoNothing();
 
   revalidatePath("/concepts");
+  // Dismissing a cluster changes the syllabus page's banner count too.
+  revalidatePath("/syllabi/[syllabusId]", "page");
   return { ok: true };
 }

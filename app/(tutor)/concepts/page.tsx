@@ -28,7 +28,7 @@ export default async function ConceptsPage() {
         title="Concepts"
         sub={
           <span className="text-sm text-muted-foreground">
-            {all.length} concepts
+            {all.length} {all.length === 1 ? "concept" : "concepts"}
             {clusters.length > 0 && ` · ${clusters.length} to review`}
           </span>
         }
