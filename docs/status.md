@@ -360,7 +360,15 @@ and the "Concept deduplication" section of [`../CLAUDE.md`](../CLAUDE.md).
   and `rejectCluster` Server Actions. Both authorize **every** id in the
   request (survivor and losers, or both sides of a pair) before touching
   anything, so a legitimately-owned id can't launder access to one that
-  isn't. `tests/authz.concept.test.ts` (7 tests) and
+  isn't. `mergeConcepts` additionally re-selects the whole cluster
+  `FOR UPDATE` **inside** its transaction and re-checks liveness there: two
+  overlapping merges used to be able to tombstone each other's survivor and
+  leave two dead rows pointing at one another, which the concept resolver
+  would then follow into a soft-deleted row forever. The second merge now
+  blocks on the locks, sees the first one's tombstones, and returns "That
+  cluster changed — reload and try again". Every database error out of that
+  transaction is caught and returned as a typed `FormState`.
+  `tests/authz.concept.test.ts` (7 tests) and
   `tests/concepts.actions.test.ts` (2 tests).
 - `components/concept-cluster-review.tsx` — `"use client"` review UI: radio
   pick of the surviving name (defaulting to whichever variant already has the
