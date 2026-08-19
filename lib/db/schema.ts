@@ -540,7 +540,11 @@ export const concepts = pgTable(
     // soft-delete would let a later syllabus emitting the old name create a
     // fresh row and re-propose the identical merge forever. conceptIdFor
     // follows this pointer instead. Merges repoint existing tombstones at the
-    // new survivor, so a chain is always exactly one hop.
+    // new survivor, so a chain is exactly one hop — but only because
+    // mergeConcepts serialises overlapping merges on FOR UPDATE row locks over
+    // the whole cluster. Without that lock two merges can interleave and leave
+    // two tombstones pointing at each other; nothing in this column's type or
+    // constraints prevents a cycle.
     mergedIntoId: uuid("merged_into_id").references(
       (): AnyPgColumn => concepts.id,
       { onDelete: "set null" },

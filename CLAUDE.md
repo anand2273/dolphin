@@ -323,8 +323,16 @@ whether to merge them. Nothing here runs automatically.
   merge forever. `conceptIdFor` now checks a tombstone match after the live
   match and follows `merged_into_id` instead of recreating the row. Merging
   also repoints any tombstone that already pointed at a loser to the new
-  survivor, so a chain is always exactly one hop — resolution never needs a
-  loop guard.
+  survivor, so a chain is exactly one hop and resolution needs no loop guard —
+  **but that holds because `mergeConcepts` serialises merges, not by
+  construction.** It re-selects the whole cluster `FOR UPDATE` inside its
+  transaction and re-checks liveness there; a second merge over an overlapping
+  cluster blocks on those locks, sees the first one's tombstones on release,
+  and returns "That cluster changed" instead of writing. Authorizing outside
+  the transaction alone would let two merges each tombstone the other's
+  survivor, leaving two dead rows pointing at each other — a cycle
+  `conceptIdFor` would follow into a soft-deleted row forever, with no undo in
+  v1 to get out of it.
 - **Rejections in `concept_merge_rejections` are pairwise, not per-cluster,
   because a cluster has no stable identity.** Clusters are derived on every
   read from live concepts plus rejected pairs, never stored; a rejection

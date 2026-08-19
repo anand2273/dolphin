@@ -166,7 +166,9 @@ export async function processSyllabusExtraction(
         // "deleted_at is null", so without this a merged-away name has no live
         // row, gets recreated here, and the tutor is proposed the identical
         // merge after every future upload. Merges repoint tombstones at the new
-        // survivor, so this is always one hop — no loop needed.
+        // survivor and take FOR UPDATE locks over the whole cluster so two of
+        // them cannot interleave into a cycle — that is what makes one hop
+        // enough here, so no loop guard is needed.
         const [tombstone] = await tx
           .select({ mergedIntoId: concepts.mergedIntoId })
           .from(concepts)
