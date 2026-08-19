@@ -200,12 +200,15 @@ the owning tutor before any row is read. Everything future-facing in the mockup
 (Library, whiteboard, homework question sets, syllabus pills) was deliberately
 left out — see the scope rules in CLAUDE.md.
 
-## Syllabus creation — backend only
+## Syllabus creation
 
 The first stage explicitly beyond v1 — see the "LLM calls" carve-out in
 [`../CLAUDE.md`](../CLAUDE.md). Schema, storage, authorization, actions, presets
-and the async extraction worker are built; **there is no Syllabi tab or editor
-UI yet** — this checkpoint is backend-only, by request.
+and the async extraction worker are what this checkpoint delivered — backend
+only, by request. The Syllabi tab and editor (`app/(tutor)/syllabi/`) shipped
+afterwards and is built and linked from the tutor nav — see the Correction
+note under Summary. The section below still describes only the backend half
+of this checkpoint.
 
 - `lib/db/schema.ts` — three new tables (`syllabuses`, `concepts`,
   `topic_concepts`), plus `topics` reshaped to be syllabus-scoped (was an
@@ -249,10 +252,10 @@ through the full flow, extracted by Gemini, and landed as correctly-nested
 topics/concepts. Local Redis runs via `pnpm redis:start` (Docker); local
 `.env.local` has a working `GEMINI_API_KEY`.
 
-**Not built**: the Syllabi tab itself, `classes.syllabus_id` (attaching a
-syllabus to a class), and assignment tagging from a syllabus's topics (still
-waiting on CP6). Nothing is deployed anywhere yet — worker and Redis both run
-locally only (see known gaps below).
+**Not built**: `classes.syllabus_id` (attaching a syllabus to a class), and
+assignment tagging from a syllabus's topics (still waiting on CP6). Nothing is
+deployed anywhere yet — worker and Redis both run locally only (see known gaps
+below).
 
 ### Extraction worker — open findings (review, 2026-08-04)
 
