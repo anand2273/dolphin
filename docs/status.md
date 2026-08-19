@@ -4,8 +4,8 @@
 with no code behind them yet — that is deliberate (see the forward-compat hooks
 in [`../CLAUDE.md`](../CLAUDE.md)), not an oversight.
 
-Last updated: Syllabus creation — backend (post-UI-overhaul); extraction-worker
-review findings recorded 2026-08-04.
+Last updated: Concept deduplication (normalised-key clustering, cluster review,
+merge/reject) — 2026-08-07–17.
 
 ---
 
@@ -24,12 +24,21 @@ review findings recorded 2026-08-04.
 | — | Class deletion (type-to-confirm soft delete) | Done |
 | — | UI overhaul — shell, mockup design language, dark mode | Done |
 | — | Syllabus creation — backend (schema, upload, presets, async extraction) | Done |
-| — | Syllabus creation — UI (Syllabi tab, editor) | **Not started** |
+| — | Syllabus creation — UI (Syllabi tab, editor) | Done |
+| — | Concept deduplication (clustering, cluster review, merge/reject) | Done |
 | CP6 | Assignments and submissions | **Not started** |
 | CP7+ | Everything else in [`future-enhancements.md`](future-enhancements.md) | Not started |
 
-**71 tests, all passing.** Every one is an authorization test; the suite is
-deliberately weighted toward negative cases.
+**136 tests, all passing.** The suite is still weighted toward authorization
+(including negative cases), with unit coverage added for the pure helpers
+underneath the syllabus-extraction merge/degeneracy logic and concept
+normalisation/clustering.
+
+*Correction, made while doing the concept-dedup pass below:* the "Syllabus
+creation — UI" row above was marked **Not started**, which was already wrong —
+`app/(tutor)/syllabi/` (list + detail + topic/concept editor) exists and is
+linked from the tutor nav. This branch didn't build it; this doc just hadn't
+been updated when it shipped. See "No Syllabi tab UI" retired below.
 
 ---
 
@@ -248,10 +257,11 @@ locally only (see known gaps below).
 ### Extraction worker — open findings (review, 2026-08-04)
 
 A code review of `worker/` found the following. Ordered by severity. Findings
-1 and 2 are now fixed; 3–9 are open. (Two related issues found the same day
-were fixed before the review: the concept lookup in `conceptIdFor` is now
-case-insensitive to match `concepts_tutor_name_live_uidx`, and the syllabus
-page no longer renders the raw `extraction_error` DB text to tutors.)
+1, 2, 3 and 7 are now fixed; 4, 5, 6, 8, 9 are open. (Two related issues found
+the same day were fixed before the review: the concept lookup in
+`conceptIdFor` is now case-insensitive to match `concepts_tutor_name_live_uidx`,
+and the syllabus page no longer renders the raw `extraction_error` DB text to
+tutors.)
 
 1. ~~**Model string contradicts its own comment and CLAUDE.md.**~~ **Resolved
    2026-08-04 by keeping `gemini-flash-latest` and correcting the docs**, not
@@ -272,11 +282,18 @@ page no longer renders the raw `extraction_error` DB text to tutors.)
    re-extraction rather than being wiped by a clear-and-rewrite. (This also
    makes `retrySyllabusExtraction` safe from any status, so it needs no
    status guard of its own.)
-3. **Concept-creation race between concurrent jobs.** The worker runs
-   `concurrency: 2`; two jobs for the same tutor can both miss the
-   select-then-insert in `conceptIdFor` and collide on
-   `concepts_tutor_name_live_uidx` (23505), failing a whole job. Needs
-   `onConflictDoNothing().returning()` + re-select to be idempotent.
+3. ~~**Concept-creation race between concurrent jobs.**~~ **Resolved — concept-
+   dedup work (2026-08-07), prerequisite to it.** `conceptIdFor` was already
+   being touched to add tombstone resolution (below), so the fix landed at the
+   same time: create is now `onConflictDoNothing().returning()`, and a miss
+   re-selects by `lower(name)` rather than trusting the insert. Two concurrent
+   jobs for the same tutor colliding on `concepts_tutor_name_live_uidx` no
+   longer aborts either transaction. **No automated test covers this path** —
+   `tests/worker.extraction.test.ts` only exercises the pure helpers
+   (`mergeExtractionResults`, `isDegenerate`, `truncate`); the race and the new
+   tombstone-lookup branch in `conceptIdFor` itself have no test double for the
+   `tx` it runs inside. See the "Concept deduplication" section of
+   `../CLAUDE.md`.
 4. **Prompt concatenation typo** in `worker/gemini-extract.ts`'s `basePrompt`:
    `"...Chain rule is a concept" + "Do not promote..."` — no space/period, so
    the model receives `a conceptDo not promote`.
@@ -287,10 +304,16 @@ page no longer renders the raw `extraction_error` DB text to tutors.)
 6. **No graceful shutdown** in `worker/index.ts` — no SIGTERM/SIGINT handler
    calling `worker.close()`. Safe today (transaction aborts, BullMQ recovers
    the stalled job) but a drain-then-exit is cheap and standard for Railway.
-7. **Concept descriptions are silently dropped.** Gemini returns and Zod
-   validates a `description` per concept, but the insert writes only `name`,
-   despite `concepts.description` existing. Related: in the chunk merge, the
-   first-seen topic description wins, discarding a later chunk's fuller one.
+7. ~~**Concept descriptions are silently dropped.**~~ **Resolved — concept-
+   dedup work (2026-08-07), adjacent, not required.** `conceptIdFor`'s insert
+   now writes `description: description ?? null`; nothing currently reads it
+   (detection is name-only normalisation, see "Concept deduplication" in
+   `../CLAUDE.md`), but a future description-based evaluation is now possible
+   without a backfill. **The related chunk-merge issue is still open**: in
+   `mergeExtractionResults`, a *topic*'s description still comes from whichever
+   chunk mentioned that topic first, and is never overwritten by a later
+   chunk's fuller one — that half of finding 7 was about topics, not concepts,
+   and concept dedup didn't touch it.
 8. **Per-chunk caps but no post-merge cap.** Zod bounds each chunk (60 topics /
    30 concepts) but the merged total is unbounded — a long document can write
    arbitrarily many topic rows.
@@ -300,6 +323,64 @@ page no longer renders the raw `extraction_error` DB text to tutors.)
 
 Minor: topic/concept inserts are sequential N+1 awaits inside the transaction
 (batchable).
+
+## Concept deduplication
+
+A tutor's concepts accumulate across every syllabus they upload and the same
+idea shows up under slightly different names. `/concepts` derives clusters of
+same-normalised-key concepts and lets the tutor merge or dismiss each one.
+Detection went through a full embedding/pgvector design first, calibrated
+against the real 736-concept corpus, and was **withdrawn on measurement** —
+see [`superpowers/specs/2026-08-06-concept-dedup-design.md`](superpowers/specs/2026-08-06-concept-dedup-design.md)
+and the "Concept deduplication" section of [`../CLAUDE.md`](../CLAUDE.md).
+
+- `lib/concepts/normalise.ts` — `normalisedKey(name)`, the entire detection
+  rule: lowercase, unify apostrophes, strip stopwords, crude singularise,
+  `-our` → `-or`, dedupe + sort tokens. Pure, unit-tested against the real
+  corpus's actual duplicate and near-miss pairs
+  (`tests/concepts.normalise.test.ts`, 11 tests).
+- `lib/concepts/cluster.ts` — `clusterConcepts()` groups live concepts by
+  equal key (derived on every read, nothing stored or invalidated) and drops
+  fully-rejected groups; `pairKey()` gives an unordered concept pair a
+  canonical identity matching `concept_merge_rejections`'s
+  `CHECK (concept_a_id < concept_b_id)` (`tests/concepts.cluster.test.ts`,
+  7 tests).
+- `lib/db/schema.ts` — `concepts.mergedIntoId` (self-referencing tombstone)
+  and `concept_merge_rejections` (pairwise, permanent "not duplicates").
+  Migration `0003`.
+- `lib/db/queries/concepts.ts`, `lib/auth/authz.ts` (`assertConceptsOwned`),
+  `lib/validation/concept.ts` — read path and the ownership gate; a concept
+  has no class relationship, so authorization is ownership-only, the same
+  shape as `assertSyllabusOwner`.
+- `app/(tutor)/concepts/` (`page.tsx`, `actions.ts`) — the Concepts
+  destination: all live concepts, clusters awaiting review, `mergeConcepts`
+  and `rejectCluster` Server Actions. Both authorize **every** id in the
+  request (survivor and losers, or both sides of a pair) before touching
+  anything, so a legitimately-owned id can't launder access to one that
+  isn't. `tests/authz.concept.test.ts` (7 tests) and
+  `tests/concepts.actions.test.ts` (2 tests).
+- `components/concept-cluster-review.tsx` — `"use client"` review UI: radio
+  pick of the surviving name (defaulting to whichever variant already has the
+  most topic links), "Merge into this name", "Not duplicates — keep all".
+- `worker/process-syllabus-extraction.ts` — `conceptIdFor` now checks a
+  tombstone after a live-name miss and follows `merged_into_id` instead of
+  recreating the row, and its create path is
+  `onConflictDoNothing().returning()` + re-select rather than a bare insert
+  (closes extraction-worker finding #3, a concurrency-2 race — see above).
+  It also now persists `description` on create (closes finding #7's concept
+  half).
+- On the syllabus detail page, a dismissible banner appears when the tutor's
+  clusters are non-empty ("N groups of your concepts look like duplicates"),
+  linking to `/concepts`. Extraction itself is unaffected either way — a
+  flagged concept is still created and linked normally; review is optional.
+- **No undo in v1.** Clearing `merged_into_id` and `deleted_at` would restore
+  a tombstoned concept, but its `topic_concepts` links were already repointed
+  to the survivor at merge time and are not recoverable from the tombstone
+  alone.
+
+**Not verified in a browser.** All 136 tests pass and `pnpm typecheck` /
+`pnpm lint` are clean, but nobody has opened `/concepts` or a syllabus page's
+duplicate banner in a running app yet — see known gaps below.
 
 ## Deployment
 
@@ -325,7 +406,8 @@ work, and CP6 will be the first thing to write to them.
 
 `topics` is no longer in this table — the syllabus-creation backend gave it a
 real shape and real writers (manual creation, preset-clone, the extraction
-worker). It just has no UI yet, same as everything else in this checkpoint.
+worker), and (contrary to what this checkpoint used to say here) the Syllabi
+tab that reads and edits it does exist — see the correction under Summary.
 
 ## Known gaps
 
@@ -354,6 +436,24 @@ Ordered by how much they matter.
    worker), including the `REDIS_URL` the Next app needs as the queue's
    producer — which is Railway's *public* proxy URL, not the private one the
    worker uses.
-9. **No Syllabi tab UI.** The backend (schema, actions, worker) is done and
-   tested via `scripts/test-syllabus-pipeline.ts`; a tutor cannot reach any of
-   it without that script or a direct Server Action call today.
+9. ~~**No Syllabi tab UI.**~~ **Retired — was already stale.** This gap
+   described a state that no longer matched the code by the time the
+   concept-dedup work started: `app/(tutor)/syllabi/` (list, detail,
+   topic/concept editor) exists and is reachable from the tutor nav. Nothing
+   in the concept-dedup branch built it; this doc just hadn't been corrected
+   when it shipped. See the correction note under Summary.
+10. **`/concepts` has had no browser verification.** All 136 automated tests
+    pass and `pnpm typecheck` / `pnpm lint` are clean, but nobody has opened
+    `/concepts`, merged a real cluster, rejected one, or seen the syllabus
+    page's duplicate-count banner in a running app. The review UI
+    (`components/concept-cluster-review.tsx`) is untested beyond its authors
+    reading it.
+11. **`conceptIdFor`'s tombstone-following and race-closing paths have no
+    automated test coverage.** `tests/worker.extraction.test.ts` only covers
+    the pure helpers extracted out of `worker/process-syllabus-extraction.ts`
+    (`mergeExtractionResults`, `isDegenerate`, `truncate`) — nothing exercises
+    `conceptIdFor` itself, so the live-match / tombstone-match / create /
+    `onConflictDoNothing`-then-re-select branches (see "Concept
+    deduplication" above) are only checked by reading the code, not by a
+    test. This is the same gap the design doc's Testing section called out
+    and it was not closed by this work.

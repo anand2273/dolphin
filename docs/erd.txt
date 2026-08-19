@@ -101,7 +101,7 @@ CORE DOMAIN                                        |
        extraction_status (none|pending|processing|done|failed)
 
 
-SYLLABUS CREATION (backend only — no Syllabi tab UI yet; see status.md)
+SYLLABUS CREATION (Syllabi tab + async extraction worker; see status.md)
 -------------------------------------------------------------------------
   Independent of the class/session tree above. Tutor-owned; a class doesn't
   reference a syllabus yet (`classes.syllabus_id` is not built).
@@ -130,10 +130,31 @@ SYLLABUS CREATION (backend only — no Syllabi tab UI yet; see status.md)
       |  assignment_topics,        concepts (sd)
       |  still CP6-unbuilt)          PK id
       v                              FK-> profiles (tutor_id)
-  assignments (see above)              name (unique per tutor)
+  assignments (see above)              name (unique per tutor, live rows only
+                                          - concepts_tutor_name_live_uidx on
+                                          (tutor_id, lower(name)) where
+                                          deleted_at is null)
                                         description
+                                        FK-> concepts.id (merged_into_id,
+                                          nullable) <- tombstone: set with (sd)
+                                          when a duplicate is merged into
+                                          another concept; the survivor's own
+                                          merged_into_id stays NULL
                                      <- not tied to one topic or one syllabus;
                                         the same concept can stretch across both
+      |
+      | 1:N (as concept_a / concept_b, unordered pair)
+      v
+  concept_merge_rejections
+    PK (concept_a_id, concept_b_id)  <- CHECK (concept_a_id < concept_b_id)
+    FK-> profiles (tutor_id)            enforces canonical pair order
+    FK-> concepts.id (concept_a_id)
+    FK-> concepts.id (concept_b_id)
+    created_at
+    <- tutor's permanent "not duplicates" verdict on one pair; derived
+       clusters (by normalised name key, see ../CLAUDE.md's "Concept
+       deduplication") hide a pair once rejected, but a cluster reappears if a
+       new concept with the same key joins it
 
   Async extraction: uploading a syllabus document sets extraction_status =
   "pending" and enqueues a BullMQ job. A standalone worker process (outside
@@ -178,3 +199,5 @@ CARDINALITY SUMMARY
   profiles(tutor)  1 --- N  concepts
   topics           N --- N  concepts           (through topic_concepts)
   assignments      N --- N  topics             (through assignment_topics, CP6-unbuilt)
+  concepts         1 --- N  concepts           (merged_into_id, self-ref tombstone pointer)
+  concepts         N --- N  concepts           (through concept_merge_rejections, unordered pair)
