@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { attachments, concepts, syllabuses, topicConcepts, topics } from "@/lib/db/schema";
+import { createConceptResolver } from "@/lib/db/concept-resolution";
+import { attachments, syllabuses, topicConcepts, topics } from "@/lib/db/schema";
 import { requireAuthUser, getProfile } from "@/lib/auth/session";
 import { assertTutor } from "@/lib/auth/roles";
 import { assertSyllabusOwner, AuthzError } from "@/lib/auth/authz";
@@ -129,37 +130,12 @@ export async function createSyllabusFromPreset(
       .returning({ id: syllabuses.id });
 
     // Concepts are tutor-scoped and may already exist from a previous preset or
-    // upload; reuse the live row instead of creating a duplicate under the same
-    // name (concepts_tutor_name_live_uidx would reject that anyway).
-    const conceptIdByName = new Map<string, string>();
-    async function conceptIdFor(name: string): Promise<string> {
-      const key = name.toLowerCase();
-      const existing = conceptIdByName.get(key);
-      if (existing) return existing;
-
-      const [row] = await tx
-        .select({ id: concepts.id })
-        .from(concepts)
-        .where(
-          and(
-            eq(concepts.tutorId, user.id),
-            eq(concepts.name, name),
-            isNull(concepts.deletedAt),
-          ),
-        )
-        .limit(1);
-      if (row) {
-        conceptIdByName.set(key, row.id);
-        return row.id;
-      }
-
-      const [created] = await tx
-        .insert(concepts)
-        .values({ tutorId: user.id, name })
-        .returning({ id: concepts.id });
-      conceptIdByName.set(key, created.id);
-      return created.id;
-    }
+    // upload; reuse rather than creating a duplicate under the same name. This
+    // is the SAME resolver the extraction worker uses — a preset copy that
+    // recreated a merged-away name would re-propose a merge the tutor already
+    // made, and this path used to have its own case-sensitive copy that did
+    // exactly that.
+    const conceptIdFor = createConceptResolver(tx, user.id);
 
     for (const [index, topic] of preset.topics.entries()) {
       const [topicRow] = await tx

@@ -92,7 +92,12 @@ immediately useful to a working tutor.
 Per CLAUDE.md, none of these enter the codebase during v1, regardless of how
 much the direction above implies them:
 
-- LLM SDKs, vector stores, embedding columns
+- LLM SDKs, vector stores, embedding columns — the syllabus stage carries the
+  Gemini SDK under CLAUDE.md's carve-out; vectors remain out. *Tested and left
+  standing 2026-08-06*: pgvector was greenlit for concept deduplication, then
+  measured against the real 736-concept corpus and found to lose to plain string
+  normalisation. See
+  [`superpowers/specs/2026-08-06-concept-dedup-design.md`](superpowers/specs/2026-08-06-concept-dedup-design.md).
 - Auto-marking of any kind
 - Analytics dashboards
 - Multi-tutor agencies or organisations
@@ -111,3 +116,16 @@ any of the above. The full list with detail is in
 3. The Playwright happy path CLAUDE.md specifies
 4. Storage garbage collection for orphaned objects
 5. Email delivery monitoring
+
+# Syllabus Feature Enhancements
+1. Concepts: find a way to dedup these concepts when multiple syllabi are uploaded
+   — **designed 2026-08-06**, see
+   [`superpowers/specs/2026-08-06-concept-dedup-design.md`](superpowers/specs/2026-08-06-concept-dedup-design.md).
+   Normalised-key clustering with tutor sign-off; embeddings evaluated against
+   the real corpus and deferred with evidence.
+2. Question bank: figure out how to configure the question bank and attribute them to the relevant syllabi
+    - Do we link the syllabi to the concepts, rather than the topics/syllabus? 
+    - Question attribute data needs to be quite robust: have concepts, level and etc
+    - How will we let the tutors access them/create materials? 
+    - Possible design direction: scope the questions to the syllabus only, encourage proper usage? 
+    - 

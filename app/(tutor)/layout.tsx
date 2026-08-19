@@ -17,6 +17,7 @@ export default async function TutorLayout({
         navItems={[
           { label: "Classes", href: "/dashboard" },
           { label: "Syllabi", href: "/syllabi" },
+          { label: "Concepts", href: "/concepts" },
         ]}
       />
       {children}

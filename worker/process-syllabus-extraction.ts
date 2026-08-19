@@ -1,12 +1,7 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import {
-  attachments,
-  concepts,
-  syllabuses,
-  topicConcepts,
-  topics,
-} from "@/lib/db/schema";
+import { createConceptResolver } from "@/lib/db/concept-resolution";
+import { attachments, syllabuses, topicConcepts, topics } from "@/lib/db/schema";
 import { SYLLABUS_DOCUMENTS_BUCKET } from "@/lib/storage/config";
 import { createSignedDownloadUrl } from "@/lib/storage/objects";
 import type { SyllabusExtractionJob } from "@/lib/queue/syllabus-extraction";
@@ -128,42 +123,13 @@ export async function processSyllabusExtraction(
     }
 
     await db.transaction(async (tx) => {
-      // Concepts are tutor-scoped and may already exist (from another syllabus
-      // or a previous extraction); reuse the live row under the same name
-      // rather than creating a duplicate. Matched case-insensitively because
-      // concepts_tutor_name_live_uidx (lib/db/schema.ts) is a case-insensitive
-      // unique index on (tutor_id, lower(name)) — a case-sensitive lookup here
-      // can miss an existing row that differs only in case and then collide
-      // with that same index on insert.
-      const conceptIdByName = new Map<string, string>();
-      async function conceptIdFor(name: string): Promise<string> {
-        const key = name.toLowerCase();
-        const cached = conceptIdByName.get(key);
-        if (cached) return cached;
-
-        const [existing] = await tx
-          .select({ id: concepts.id })
-          .from(concepts)
-          .where(
-            and(
-              eq(concepts.tutorId, syllabus.tutorId),
-              sql`lower(${concepts.name}) = ${key}`,
-              isNull(concepts.deletedAt),
-            ),
-          )
-          .limit(1);
-        if (existing) {
-          conceptIdByName.set(key, existing.id);
-          return existing.id;
-        }
-
-        const [created] = await tx
-          .insert(concepts)
-          .values({ tutorId: syllabus.tutorId, name })
-          .returning({ id: concepts.id });
-        conceptIdByName.set(key, created.id);
-        return created.id;
-      }
+      // Concepts are tutor-scoped and may already exist (from another
+      // syllabus or a previous extraction); reuse rather than duplicate.
+      // Shared with the preset deep-copy in app/(tutor)/syllabi/actions.ts —
+      // see lib/db/concept-resolution.ts for why the live/tombstone/create
+      // order is what it is. The resolver's name cache is per-transaction, so
+      // it is built here rather than at module scope.
+      const conceptIdFor = createConceptResolver(tx, syllabus.tutorId);
 
       // Re-extraction (a retry, or a second document on the same syllabus) has
       // to be idempotent. topics_syllabus_name_live_uidx is a live-rows-only
@@ -216,7 +182,10 @@ export async function processSyllabusExtraction(
         }
 
         for (const extractedConcept of extractedTopic.concepts) {
-          const conceptId = await conceptIdFor(extractedConcept.name);
+          const conceptId = await conceptIdFor(
+            extractedConcept.name,
+            extractedConcept.description,
+          );
           await tx
             .insert(topicConcepts)
             .values({ topicId, conceptId })

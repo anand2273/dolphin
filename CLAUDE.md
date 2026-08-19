@@ -18,7 +18,11 @@ v1 is a **session-centric file and homework system**. The AI layer (material gen
 
 Auto-marking, analytics dashboards, note editing, payments or invoicing, calendar sync, scheduling, notifications beyond one transactional email, in-app messaging, mobile apps, multi-tutor agencies or orgs, admin panels.
 
-**LLM calls are permitted for exactly one purpose**: mining topics and concepts out of a tutor-uploaded syllabus document (see Syllabus below). *Decided 2026-08: this is the one deliberate exception to the original "no LLM calls of any kind" rule — the syllabus-creation stage is the next thing being built after v1, not part of v1 itself.* No other AI feature (auto-marking, generation, analytics) is in scope until each is separately greenlit.
+**LLM calls are permitted for exactly one purpose**: mining topics and concepts out of a tutor-uploaded syllabus document (see Syllabus below). *Decided 2026-08: this is the one deliberate exception to the original "no LLM calls of any kind" rule — the syllabus-creation stage is the next thing being built after v1, not part of v1 itself.* No other AI feature (auto-marking, generation, analytics, retrieval over materials) is in scope until each is separately greenlit.
+
+*Embedding-based concept deduplication was greenlit on 2026-08-06 and then **withdrawn on measurement**, before any code was written.* Calibrated against the real 736-concept corpus, plain string normalisation (singularise, unify apostrophes, sort tokens) found 45 of the 58 merges embeddings found, with better precision and better recall on plurals — no API call, no pgvector, no threshold. The evidence, including which embedding models are dead and why descriptions make it worse, is in [`docs/superpowers/specs/2026-08-06-concept-dedup-design.md`](docs/superpowers/specs/2026-08-06-concept-dedup-design.md). **Read that before proposing embeddings here again.**
+
+**Detection never merges anything on its own.** However duplicates are found, they are ranked as candidates and the tutor decides whether two concepts are one. This is the same draft-then-approve contract homework question sets carry — the tool proposes, the tutor disposes.
 
 If a task appears to require any of the above, **stop and ask** rather than building a partial version.
 
@@ -39,6 +43,8 @@ If a task appears to require any of the above, **stop and ask** rather than buil
 | **Feedback** | A tutor's comment on a specific submission version. `author_type` reserves room for a future agent; v1 only ever writes tutor rows. |
 | **Topic** | A tutor-curated unit of a syllabus (e.g. "Algebra"). Populated by LLM extraction from an uploaded document, by hand, or cloned from a preset. Every topic belongs to exactly one syllabus. Assignment tagging (not yet built) will pick from the topics of the syllabus a class follows. |
 | **Concept** | A tutor-owned piece of vocabulary a topic references (e.g. "Quadratic Formula"). Not tied to one topic or one syllabus — the same concept can stretch across both, within that tutor's own account. The thing later analytics aggregate on. |
+| **Cluster** | A group of a tutor's live concepts whose names share a normalised key (see Concept deduplication below) and that the tutor has not fully dismissed as non-duplicates. Derived on every read, never stored — a cluster has no id and no stable identity across requests. |
+| **Tombstone** | A concept row soft-deleted by a merge, with `merged_into_id` pointing at the survivor it was merged into. Exists so a name that was merged away can be recognised on a later syllabus upload instead of being recreated. |
 | **Syllabus** | An optional curriculum, tutor-owned and independent of any class (e.g. "CIE IGCSE Mathematics 0580") — a class without one is fully functional. Populated by uploading a document (LLM-extracted into topics/concepts), by hand, or from a Preset. *`classes.syllabus_id` — attaching a syllabus to a class — is not yet built; this is currently a standalone resource.* |
 | **Preset** | A backend-authored syllabus template for a commonly tutored curriculum (e.g. Singapore's PSLE Mathematics). Lives as a static code fixture, not a database row. Selecting one deep-copies it into a new, fully independent tutor-owned syllabus. |
 | **Library** | *(future — no code yet)* The tutor's own separate destination holding syllabus-scoped, reusable materials and, later, the question bank. A library material reaches students only by being attached to a session. |
@@ -274,6 +280,80 @@ from-scratch init does. Data survives the stop/start (backed up to a Docker
 volume), so this is safe, just non-obvious. (Symptom if skipped: `Bucket not
 found` on first upload attempt against a brand new bucket.)
 
+## Concept deduplication
+
+A tutor's concepts accumulate across every syllabus they upload, and the same
+idea shows up under slightly different names (`alcohol` / `alcohols`,
+`coulomb's law` with a curly vs. straight apostrophe, `Inverse Matrix` /
+`Matrix Inverse`). `/concepts` surfaces these as clusters; the tutor decides
+whether to merge them. Nothing here runs automatically.
+
+- **Detection is plain string work, by *measurement* — not because embeddings
+  weren't tried.** `lib/concepts/normalise.ts`'s `normalisedKey(name)` is the
+  entire detection rule: lowercase, unify apostrophes, strip a short stopword
+  list, crudely singularise, map `-our` → `-or`, then dedupe and sort the
+  remaining tokens. Two concepts are candidate duplicates **iff their keys are
+  equal** — `clusterConcepts()` in `lib/concepts/cluster.ts` groups by that
+  key, which is why grouping is transitive with no connected-components pass
+  needed. An embedding/pgvector design was built out on paper first and
+  calibrated against the real 736-concept corpus; normalisation alone found 45
+  of the 58 merges embeddings found, with better precision and better recall
+  on plurals — no API call, no extension, no threshold. Read the "Evidence"
+  section of
+  [`docs/superpowers/specs/2026-08-06-concept-dedup-design.md`](docs/superpowers/specs/2026-08-06-concept-dedup-design.md)
+  before proposing embeddings here again — it also records which Gemini
+  embedding models are outright dead on `embedContent`. The normalised key is
+  never shown to a tutor and never used as a display name: the singulariser
+  mangles words (`analysis` → `analysi`) in a way that's harmless for
+  comparison but wrong to render.
+- **The write path deliberately keeps exact `lower(name)` matching —
+  normalisation informs review only, and never performs a merge itself.**
+  `createConceptResolver` in `lib/db/concept-resolution.ts` still looks up a
+  live concept by plain case-insensitive name. If it matched on the
+  normalised key instead, extraction would silently collapse `alcohol` into
+  `alcohols` with no tutor in the loop — the one thing this feature must never
+  do. Detection only ranks candidates; the tutor decides whether two concepts
+  are one. Same draft-then-approve contract homework question sets carry — the
+  tool proposes, the tutor disposes.
+- **`concepts.merged_into_id` is a tombstone, and it exists because
+  `concepts_tutor_name_live_uidx` is partial** — the unique index is on
+  `(tutor_id, lower(name)) where deleted_at is null`. A plain soft-delete would
+  leave the merged-away name with no live row, so the next syllabus upload
+  that emits that name would create a fresh row and re-propose the identical
+  merge forever. Name-to-id resolution checks a tombstone match after the live
+  match and follows `merged_into_id` instead of recreating the row. It lives in
+  **`lib/db/concept-resolution.ts` and has exactly one implementation on
+  purpose**: both writers of `concepts` — the extraction worker and
+  `createSyllabusFromPreset`'s deep copy — call `createConceptResolver(tx,
+  tutorId)`. The preset path used to carry its own case-sensitive copy that
+  followed no tombstone, which quietly recreated merged-away names; `lib/` is
+  the shared home because `worker/` may import from it and must never import
+  from `app/`. Merging
+  also repoints any tombstone that already pointed at a loser to the new
+  survivor, so a chain is exactly one hop and resolution needs no loop guard —
+  **but that holds because `mergeConcepts` serialises merges, not by
+  construction.** It re-selects the whole cluster `FOR UPDATE` inside its
+  transaction and re-checks liveness there; a second merge over an overlapping
+  cluster blocks on those locks, sees the first one's tombstones on release,
+  and returns "That cluster changed" instead of writing. Authorizing outside
+  the transaction alone would let two merges each tombstone the other's
+  survivor, leaving two dead rows pointing at each other — a cycle
+  `conceptIdFor` would follow into a soft-deleted row forever, with no undo in
+  v1 to get out of it.
+- **Rejections in `concept_merge_rejections` are pairwise, not per-cluster,
+  because a cluster has no stable identity.** Clusters are derived on every
+  read from live concepts plus rejected pairs, never stored; a rejection
+  recorded against "the group" would also suppress a concept that joins the
+  group later — one the tutor never actually looked at. A cluster is shown
+  while it still contains at least one pair the tutor has not rejected, so a
+  new arrival re-surfaces the cluster instead of inheriting a decision made
+  before it existed. `pairKey()`/the sorted pair in `rejectCluster` and the
+  table's `CHECK (concept_a_id < concept_b_id)` all rely on plain string `<`
+  agreeing on the same canonical order.
+- No undo in v1. Clearing `merged_into_id` and `deleted_at` would restore a
+  tombstoned concept, but its `topic_concepts` links were already repointed to
+  the survivor at merge time and are not recoverable from the tombstone alone.
+
 ## Documentation
 
 `docs/` carries the detail this file deliberately doesn't. Start at
@@ -408,7 +488,12 @@ Cheap to add now, expensive to add later. Add the columns/tables; **do not** bui
 - A `topics` table plus an `assignment_topics` join, tutor-tagged and optional. Without topic tags there is nothing for later analytics to aggregate on — this is the single most valuable hook in this list.
 - An append-only `events` table (`actor_id`, `verb`, `subject_type`, `subject_id`, `occurred_at`, `payload jsonb`) written on upload, issue, submit and grade.
 
-Do **not** add LLM SDKs, vector stores, or embedding columns in v1.
+Do **not** add LLM SDKs, vector stores, or embedding columns in v1. The syllabus
+stage carries the Gemini SDK under the carve-out above; that is the only
+exception, and it does not extend to vectors. *Tested 2026-08-06 and left
+standing* — pgvector was greenlit for concept deduplication, then measured
+against the real corpus and found to lose to plain string normalisation. See the
+design doc referenced at the top of this file.
 
 ## Testing
 

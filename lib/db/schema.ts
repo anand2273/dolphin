@@ -29,6 +29,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 /* -------------------------------------------------------------------------- */
 /* Supabase-managed auth schema (we do NOT migrate this; we only reference it) */
@@ -530,6 +531,24 @@ export const concepts = pgTable(
       .references(() => profiles.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     description: text("description"),
+
+    // Set when this concept was merged into another by its tutor. The row is
+    // soft-deleted at the same time, so it leaves concepts_tutor_name_live_uidx
+    // (partial on deleted_at is null) and cannot collide with it.
+    //
+    // Load-bearing for re-extraction: that unique index is partial, so a plain
+    // soft-delete would let a later syllabus emitting the old name create a
+    // fresh row and re-propose the identical merge forever. conceptIdFor
+    // follows this pointer instead. Merges repoint existing tombstones at the
+    // new survivor, so a chain is exactly one hop — but only because
+    // mergeConcepts serialises overlapping merges on FOR UPDATE row locks over
+    // the whole cluster. Without that lock two merges can interleave and leave
+    // two tombstones pointing at each other; nothing in this column's type or
+    // constraints prevents a cycle.
+    mergedIntoId: uuid("merged_into_id").references(
+      (): AnyPgColumn => concepts.id,
+      { onDelete: "set null" },
+    ),
     ...timestamps,
     ...softDelete,
   },
@@ -551,6 +570,45 @@ export const topicConcepts = pgTable(
       .references(() => concepts.id, { onDelete: "cascade" }),
   },
   (t) => [primaryKey({ columns: [t.topicId, t.conceptId] })],
+);
+
+/* -------------------------------------------------------------------------- */
+/* concept_merge_rejections — "these are not duplicates", remembered forever.   */
+/* Pairwise, not per-cluster: clusters have no stable identity, and a group     */
+/* rejection would also suppress a concept that joins the group later.          */
+/* -------------------------------------------------------------------------- */
+
+export const conceptMergeRejections = pgTable(
+  "concept_merge_rejections",
+  {
+    tutorId: uuid("tutor_id")
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    conceptAId: uuid("concept_a_id")
+      .notNull()
+      .references(() => concepts.id, { onDelete: "cascade" }),
+    conceptBId: uuid("concept_b_id")
+      .notNull()
+      .references(() => concepts.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.conceptAId, t.conceptBId] }),
+    index("concept_merge_rejections_tutor_id_idx").on(t.tutorId),
+    // The canonical order every writer and reader of this table assumes:
+    // rejectCluster sorts each pair before inserting and pairKey() sorts
+    // before looking one up, so an unordered row would be invisible to the
+    // lookup that is supposed to find it. Declared here — and hand-added to
+    // 0003's snapshot — because 0003 already shipped it as raw SQL; without
+    // the snapshot entry the next db:generate would emit a duplicate
+    // ADD CONSTRAINT that fails on every environment that ran 0003.
+    check(
+      "concept_merge_rejections_ordered",
+      sql`${t.conceptAId} < ${t.conceptBId}`,
+    ),
+  ],
 );
 
 /* -------------------------------------------------------------------------- */

@@ -76,9 +76,15 @@ export async function listTopicsForSyllabus(
     .from(topicConcepts)
     .innerJoin(concepts, eq(concepts.id, topicConcepts.conceptId))
     .where(
-      inArray(
-        topicConcepts.topicId,
-        rows.map((r) => r.id),
+      and(
+        inArray(
+          topicConcepts.topicId,
+          rows.map((r) => r.id),
+        ),
+        // A merge tombstones the loser but leaves topic_concepts rows the
+        // worker may have written while the merge was in flight, so without
+        // this the page renders a merged-away name for good.
+        isNull(concepts.deletedAt),
       ),
     );
 

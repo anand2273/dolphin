@@ -1,7 +1,7 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { classes, enrollments, syllabuses } from "@/lib/db/schema";
+import { classes, concepts, enrollments, syllabuses } from "@/lib/db/schema";
 
 /**
  * THE single authorization helper (CLAUDE.md security invariant).
@@ -117,4 +117,34 @@ export async function assertSyllabusOwner(
   // Don't distinguish "missing" from "not yours" — same non-leak rule as classes.
   if (!syllabus || syllabus.tutorId !== userId) throw new AuthzError();
   return syllabus;
+}
+
+/**
+ * Concepts are tutor-owned with no class relationship, so the only question is
+ * ownership — the same shape as assertSyllabusOwner.
+ *
+ * Takes the whole set at once on purpose. A merge receives a survivor id and
+ * several loser ids from the client, and checking only the survivor would let a
+ * caller fold another tutor's concepts into their own.
+ */
+export async function assertConceptsOwned(
+  userId: string,
+  conceptIds: string[],
+): Promise<void> {
+  if (conceptIds.length === 0) throw new AuthzError();
+  const unique = [...new Set(conceptIds)];
+
+  const rows = await db
+    .select({ id: concepts.id })
+    .from(concepts)
+    .where(
+      and(
+        inArray(concepts.id, unique),
+        eq(concepts.tutorId, userId),
+        isNull(concepts.deletedAt),
+      ),
+    );
+
+  // Any shortfall is a failure, and we never say which id was the problem.
+  if (rows.length !== unique.length) throw new AuthzError();
 }
