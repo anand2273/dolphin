@@ -365,13 +365,17 @@ and the "Concept deduplication" section of [`../CLAUDE.md`](../CLAUDE.md).
 - `components/concept-cluster-review.tsx` — `"use client"` review UI: radio
   pick of the surviving name (defaulting to whichever variant already has the
   most topic links), "Merge into this name", "Not duplicates — keep all".
-- `worker/process-syllabus-extraction.ts` — `conceptIdFor` now checks a
-  tombstone after a live-name miss and follows `merged_into_id` instead of
-  recreating the row, and its create path is
-  `onConflictDoNothing().returning()` + re-select rather than a bare insert
+- `lib/db/concept-resolution.ts` — `createConceptResolver(tx, tutorId)`, the
+  single name-to-id resolver. It checks a tombstone after a live-name miss and
+  follows `merged_into_id` instead of recreating the row, and its create path
+  is `onConflictDoNothing().returning()` + re-select rather than a bare insert
   (closes extraction-worker finding #3, a concurrency-2 race — see above).
-  It also now persists `description` on create (closes finding #7's concept
-  half).
+  It also persists `description` on create (closes finding #7's concept half).
+  Both `worker/process-syllabus-extraction.ts` and
+  `createSyllabusFromPreset` in `app/(tutor)/syllabi/actions.ts` call it; the
+  preset path previously had its own case-sensitive copy with no tombstone
+  branch, which recreated merged-away names and re-proposed merges the tutor
+  had already made.
 - On the syllabus detail page, a dismissible banner appears when the tutor's
   clusters are non-empty ("N groups of your concepts look like duplicates"),
   linking to `/concepts`. Extraction itself is unaffected either way — a
@@ -451,11 +455,12 @@ Ordered by how much they matter.
     page's duplicate-count banner in a running app. The review UI
     (`components/concept-cluster-review.tsx`) is untested beyond its authors
     reading it.
-11. **`conceptIdFor`'s tombstone-following and race-closing paths have no
-    automated test coverage.** `tests/worker.extraction.test.ts` only covers
+11. **The concept resolver's tombstone-following and race-closing paths have
+    no automated test coverage.** `tests/worker.extraction.test.ts` only covers
     the pure helpers extracted out of `worker/process-syllabus-extraction.ts`
     (`mergeExtractionResults`, `isDegenerate`, `truncate`) — nothing exercises
-    `conceptIdFor` itself, so the live-match / tombstone-match / create /
+    `createConceptResolver` (`lib/db/concept-resolution.ts`, now shared with
+    the preset path) itself, so the live-match / tombstone-match / create /
     `onConflictDoNothing`-then-re-select branches (see "Concept
     deduplication" above) are only checked by reading the code, not by a
     test. This is the same gap the design doc's Testing section called out

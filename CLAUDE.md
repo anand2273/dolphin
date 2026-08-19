@@ -308,7 +308,7 @@ whether to merge them. Nothing here runs automatically.
   comparison but wrong to render.
 - **The write path deliberately keeps exact `lower(name)` matching —
   normalisation informs review only, and never performs a merge itself.**
-  `conceptIdFor` in `worker/process-syllabus-extraction.ts` still looks up a
+  `createConceptResolver` in `lib/db/concept-resolution.ts` still looks up a
   live concept by plain case-insensitive name. If it matched on the
   normalised key instead, extraction would silently collapse `alcohol` into
   `alcohols` with no tutor in the loop — the one thing this feature must never
@@ -320,8 +320,15 @@ whether to merge them. Nothing here runs automatically.
   `(tutor_id, lower(name)) where deleted_at is null`. A plain soft-delete would
   leave the merged-away name with no live row, so the next syllabus upload
   that emits that name would create a fresh row and re-propose the identical
-  merge forever. `conceptIdFor` now checks a tombstone match after the live
-  match and follows `merged_into_id` instead of recreating the row. Merging
+  merge forever. Name-to-id resolution checks a tombstone match after the live
+  match and follows `merged_into_id` instead of recreating the row. It lives in
+  **`lib/db/concept-resolution.ts` and has exactly one implementation on
+  purpose**: both writers of `concepts` — the extraction worker and
+  `createSyllabusFromPreset`'s deep copy — call `createConceptResolver(tx,
+  tutorId)`. The preset path used to carry its own case-sensitive copy that
+  followed no tombstone, which quietly recreated merged-away names; `lib/` is
+  the shared home because `worker/` may import from it and must never import
+  from `app/`. Merging
   also repoints any tombstone that already pointed at a loser to the new
   survivor, so a chain is exactly one hop and resolution needs no loop guard —
   **but that holds because `mergeConcepts` serialises merges, not by
