@@ -1,6 +1,11 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { conceptMergeRejections, concepts, topicConcepts } from "@/lib/db/schema";
+import {
+  conceptMergeRejections,
+  concepts,
+  topicConcepts,
+  topics,
+} from "@/lib/db/schema";
 import { clusterConcepts, pairKey, type ConceptCluster } from "@/lib/concepts/cluster";
 
 /**
@@ -45,7 +50,13 @@ export async function listConceptClustersForTutor(
   return clusterConcepts(rows, rejected);
 }
 
-/** How many topics each of the given concepts is linked to, for the review UI. */
+/**
+ * How many LIVE topics each of the given concepts is linked to, for the review
+ * UI. Both soft-delete filters matter: deleteTopic leaves its topic_concepts
+ * rows in place, so counting them would report topics the tutor can no longer
+ * see — and this number is not decoration, it picks the default survivor in
+ * components/concept-cluster-review.tsx.
+ */
 export async function countTopicsForConcepts(
   userId: string,
   conceptIds: string[],
@@ -59,10 +70,13 @@ export async function countTopicsForConcepts(
     })
     .from(topicConcepts)
     .innerJoin(concepts, eq(concepts.id, topicConcepts.conceptId))
+    .innerJoin(topics, eq(topics.id, topicConcepts.topicId))
     .where(
       and(
         inArray(topicConcepts.conceptId, conceptIds),
         eq(concepts.tutorId, userId),
+        isNull(concepts.deletedAt),
+        isNull(topics.deletedAt),
       ),
     )
     .groupBy(topicConcepts.conceptId);
