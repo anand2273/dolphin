@@ -87,20 +87,29 @@ export function mergeQuestionChunks(chunks: ChunkInput[]): {
   questions: MergedQuestion[];
   unpairedAnswers: number;
 } {
-  type Slot = { q: MergedQuestion; key: string; seq: number };
+  type Slot = { q: MergedQuestion; key: string; seq: number; lastChunk: number };
   const slots: Slot[] = [];
 
-  for (const chunk of chunks) {
+  chunks.forEach((chunk, chunkIndex) => {
     for (const raw of chunk.result.questions) {
       const q = toMerged(chunk, raw);
       const key = keyOf(q.sectionLabel, q.label);
-      // Only an overlap duplicate merges: same key AND intersecting pages. The
-      // same number far apart is two sections restarting their numbering.
-      const dup = slots.find(
-        (s) => s.key === key && s.q.startPage <= q.endPage && q.startPage <= s.q.endPage,
-      );
+      // An overlap duplicate is the same key, intersecting pages, and a
+      // DIFFERENT chunk: one chunk never repeats a question through overlap,
+      // so two same-numbered items from one chunk are two questions (sections
+      // restarting their numbering without a heading the model caught). An
+      // unlabeled question has no identity to match on, so it never merges.
+      const dup = normaliseQuestionLabel(q.label)
+        ? slots.find(
+            (s) =>
+              s.key === key &&
+              s.lastChunk !== chunkIndex &&
+              s.q.startPage <= q.endPage &&
+              q.startPage <= s.q.endPage,
+          )
+        : undefined;
       if (!dup) {
-        slots.push({ q, key, seq: slots.length });
+        slots.push({ q, key, seq: slots.length, lastChunk: chunkIndex });
         continue;
       }
       const winner = moreComplete(q, dup.q) ? q : dup.q;
@@ -109,53 +118,86 @@ export function mergeQuestionChunks(chunks: ChunkInput[]): {
         startPage: Math.min(q.startPage, dup.q.startPage),
         endPage: Math.max(q.endPage, dup.q.endPage),
       };
+      dup.lastChunk = chunkIndex;
     }
-  }
+  });
 
-  // Dedupe answer-key entries first: the overlap page repeats them.
+  const documentOrder = (a: Slot, b: Slot) => a.q.startPage - b.q.startPage || a.seq - b.seq;
+
+  // Collect answer-key entries, deduped: the overlap page repeats them. The
+  // answer text is part of the identity, so two different "1" entries on one
+  // key page are two entries, not one overlap repeat.
+  type Entry = { partKey: string; answer: string };
+  type Group = { candidates: Slot[]; entries: Entry[] };
+  const groups = new Map<string, Group>();
   const seenAnswers = new Set<string>();
   let unpairedAnswers = 0;
 
-  for (const chunk of chunks) {
-    for (const a of chunk.result.answers) {
-      const page = toAbsolute(chunk, a.page);
-      const partKey = a.partLabel ? normalisePartLabel(a.partLabel) : "";
-      const qKey = normaliseQuestionLabel(a.questionLabel);
-      const answerId = `${normaliseSection(a.sectionLabel)}|${qKey}|${partKey}|${page}`;
-      if (seenAnswers.has(answerId)) continue;
-      seenAnswers.add(answerId);
+  const entries = chunks.flatMap((chunk) =>
+    chunk.result.answers.map((a) => ({ a, page: toAbsolute(chunk, a.page) })),
+  );
+  entries.sort((x, y) => x.page - y.page); // stable: keeps within-page order
 
-      let candidates = slots.filter((s) => s.key === keyOf(a.sectionLabel, a.questionLabel));
-      if (!candidates.length) {
-        // Answer keys often omit the section heading the questions carried.
-        candidates = slots.filter((s) => normaliseQuestionLabel(s.q.label) === qKey);
-      }
-      const preceding = candidates.filter((s) => s.q.startPage <= page);
-      const target = preceding.length
-        ? preceding.reduce((best, s) => (s.q.startPage >= best.q.startPage ? s : best))
-        : candidates.length === 1
-          ? candidates[0]
-          : undefined;
-      if (!target) {
-        unpairedAnswers++;
-        continue;
-      }
+  for (const { a, page } of entries) {
+    const answer = a.answer.trim();
+    const qKey = normaliseQuestionLabel(a.questionLabel);
+    const partKey = a.partLabel ? normalisePartLabel(a.partLabel) : "";
+    const sKey = normaliseSection(a.sectionLabel);
+    const id = `${sKey}|${qKey}|${partKey}|${page}|${answer.toLowerCase().replace(/\s+/g, " ").slice(0, 80)}`;
+    if (seenAnswers.has(id)) continue;
+    seenAnswers.add(id);
+    if (!qKey || !answer) {
+      unpairedAnswers++;
+      continue;
+    }
 
-      const answer = a.answer.trim();
-      if (partKey) {
-        const part = target.q.parts.find((p) => normalisePartLabel(p.label) === partKey);
-        if (!part) unpairedAnswers++;
-        else if (part.answer === null) part.answer = answer; // inline wins
-      } else if (target.q.parts.length === 0) {
-        if (target.q.answer === null) target.q.answer = answer;
-      } else {
-        unpairedAnswers++; // a whole-question answer has no single home on a multi-part question
-      }
+    // Prefer an exact (section, label) match; answer keys often drop or
+    // reword the section heading, so fall back to the label alone.
+    const exact = slots.filter((s) => s.key === keyOf(a.sectionLabel, a.questionLabel));
+    const groupKey = exact.length ? `x:${sKey}|${qKey}|${partKey}` : `l:${qKey}|${partKey}`;
+    let group = groups.get(groupKey);
+    if (!group) {
+      const candidates = exact.length
+        ? exact
+        : slots.filter((s) => normaliseQuestionLabel(s.q.label) === qKey);
+      group = { candidates: [...candidates].sort(documentOrder), entries: [] };
+      groups.set(groupKey, group);
+    }
+    group.entries.push({ partKey, answer });
+  }
+
+  // A target that already took an answer-key entry; a second one is unpaired.
+  const keyed = new Set<object>();
+  const assign = (target: MergedQuestion, entry: Entry) => {
+    if (entry.partKey) {
+      const part = target.parts.find((p) => normalisePartLabel(p.label) === entry.partKey);
+      if (!part || keyed.has(part)) return void unpairedAnswers++;
+      if (part.answer !== null) return; // inline wins, silently
+      part.answer = entry.answer;
+      keyed.add(part);
+    } else if (target.parts.length === 0) {
+      if (keyed.has(target)) return void unpairedAnswers++;
+      if (target.answer !== null) return;
+      target.answer = entry.answer;
+      keyed.add(target);
+    } else {
+      unpairedAnswers++; // a whole-question answer has no single home on a multi-part question
+    }
+  };
+
+  for (const { candidates, entries: groupEntries } of groups.values()) {
+    if (candidates.length === 1) {
+      for (const e of groupEntries) assign(candidates[0].q, e);
+    } else if (candidates.length > 1 && groupEntries.length === candidates.length) {
+      // Same label repeated across sections, one key entry per occurrence:
+      // the n-th entry belongs to the n-th question. Any other shape is a
+      // guess, and a wrong answer on a draft is worse than a counted gap.
+      groupEntries.forEach((e, i) => assign(candidates[i].q, e));
+    } else {
+      unpairedAnswers += groupEntries.length;
     }
   }
 
-  const questions = slots
-    .sort((a, b) => a.q.startPage - b.q.startPage || a.seq - b.seq)
-    .map((s) => s.q);
+  const questions = slots.sort(documentOrder).map((s) => s.q);
   return { questions, unpairedAnswers };
 }

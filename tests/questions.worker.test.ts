@@ -153,6 +153,18 @@ describe("processQuestionExtraction", () => {
     expect(imp).toMatchObject({ status: "failed", error: NO_TOPICS_MESSAGE });
   });
 
+  it("never moves a done import back to failed (a concurrent duplicate run that fails)", async () => {
+    const { importId } = await insertImport(tutor.id, syllabusWithTopics);
+    // Simulate the other delivery committing while this one is mid-extraction.
+    extractQuestions.mockImplementation(async () => {
+      await db.update(questionImports).set({ status: "done" }).where(eq(questionImports.id, importId));
+      throw new Error("429 Too Many Requests");
+    });
+    await expect(processQuestionExtraction({ importId })).rejects.toThrow("429");
+    const [imp] = await db.select().from(questionImports).where(eq(questionImports.id, importId));
+    expect(imp.status).toBe("done");
+  });
+
   it("marks the import failed and writes nothing when extraction throws", async () => {
     extractQuestions.mockRejectedValue(new Error("Gemini did not finish cleanly (MAX_TOKENS)"));
     const { importId } = await insertImport(tutor.id, syllabusWithTopics);

@@ -130,6 +130,34 @@ describe("mergeQuestionChunks", () => {
     expect(questions).toHaveLength(2);
   });
 
+  it("never merges two same-numbered questions emitted by ONE chunk (overlap repeats only cross chunks)", () => {
+    const { questions } = mergeQuestionChunks([
+      chunk(1, 3, [
+        q({ label: "1", stem: "Exercise 3A first", startPage: 2, endPage: 2 }),
+        q({ label: "1", stem: "Exercise 3B first", startPage: 2, endPage: 2 }),
+      ]),
+    ]);
+    expect(questions.map((x) => x.stem)).toEqual(["Exercise 3A first", "Exercise 3B first"]);
+  });
+
+  it("still merges a question that spans three overlapping chunks into one", () => {
+    const { questions } = mergeQuestionChunks([
+      chunk(1, 3, [q({ label: "7", startPage: 3, endPage: 3 })]),
+      chunk(3, 5, [q({ label: "7", startPage: 1, endPage: 3, parts: [{ label: "(a)", body: "a" }] })]),
+      chunk(5, 7, [q({ label: "7", startPage: 1, endPage: 1 })]),
+    ]);
+    expect(questions).toHaveLength(1);
+    expect(questions[0].parts).toHaveLength(1);
+  });
+
+  it("never merges unlabeled questions with each other", () => {
+    const { questions } = mergeQuestionChunks([
+      chunk(1, 3, [q({ label: "", stem: "challenge A", startPage: 3, endPage: 3 })]),
+      chunk(3, 5, [q({ label: "", stem: "challenge B", startPage: 1, endPage: 1 })]),
+    ]);
+    expect(questions).toHaveLength(2);
+  });
+
   it("orders questions by first appearance", () => {
     const { questions } = mergeQuestionChunks([
       chunk(1, 3, [q({ label: "2", startPage: 3, endPage: 3 }), q({ label: "1", startPage: 1, endPage: 1 })]),
@@ -190,15 +218,56 @@ describe("mergeQuestionChunks", () => {
       expect(unpairedAnswers).toBe(1);
     });
 
-    it("pairs to the nearest preceding question when a number repeats across sections", () => {
-      const { questions } = mergeQuestionChunks([
-        chunk(1, 3, [q({ label: "1", stem: "early", startPage: 1, endPage: 1 })]),
-        chunk(7, 9, [
-          q({ label: "1", stem: "late", startPage: 1, endPage: 1 }),
-        ], [{ sectionLabel: null, questionLabel: "1", partLabel: null, page: 3, answer: "late-ans" }]),
+    const twoSections = chunk(1, 3, [
+      q({ label: "1", stem: "A1", startPage: 1, endPage: 1 }),
+      q({ label: "1", stem: "B1", startPage: 2, endPage: 2 }),
+    ]);
+
+    it("pairs a back-of-paper key for two unlabelled sections by order, not to the last section", () => {
+      const { questions, unpairedAnswers } = mergeQuestionChunks([
+        twoSections,
+        chunk(7, 9, [], [
+          { sectionLabel: null, questionLabel: "1", partLabel: null, page: 1, answer: "ans-A" },
+          { sectionLabel: null, questionLabel: "1", partLabel: null, page: 1, answer: "ans-B" },
+        ]),
       ]);
-      expect(questions.find((x) => x.stem === "late")?.answer).toBe("late-ans");
-      expect(questions.find((x) => x.stem === "early")?.answer).toBeNull();
+      expect(questions.map((x) => x.answer)).toEqual(["ans-A", "ans-B"]);
+      expect(unpairedAnswers).toBe(0);
+    });
+
+    it("pairs by order when the key's section text differs from the questions'", () => {
+      const { questions } = mergeQuestionChunks([
+        chunk(1, 3, [
+          q({ sectionLabel: "Section A: Algebra", label: "1", stem: "A1", startPage: 1, endPage: 1 }),
+          q({ sectionLabel: "Section B: Calculus", label: "1", stem: "B1", startPage: 2, endPage: 2 }),
+        ]),
+        chunk(7, 9, [], [
+          { sectionLabel: "Section A", questionLabel: "1", partLabel: null, page: 1, answer: "ans-A" },
+          { sectionLabel: "Section B", questionLabel: "1", partLabel: null, page: 1, answer: "ans-B" },
+        ]),
+      ]);
+      expect(questions.map((x) => x.answer)).toEqual(["ans-A", "ans-B"]);
+    });
+
+    it("counts entries as unpaired rather than guessing when a label is ambiguous and counts differ", () => {
+      const { questions, unpairedAnswers } = mergeQuestionChunks([
+        twoSections,
+        chunk(7, 9, [], [{ sectionLabel: null, questionLabel: "1", partLabel: null, page: 1, answer: "?" }]),
+      ]);
+      expect(questions.map((x) => x.answer)).toEqual([null, null]);
+      expect(unpairedAnswers).toBe(1);
+    });
+
+    it("counts a second key entry for an already-keyed target as unpaired", () => {
+      const { questions, unpairedAnswers } = mergeQuestionChunks([
+        chunk(1, 3, [q({ label: "4", startPage: 1, endPage: 1 })]),
+        chunk(7, 9, [], [
+          { sectionLabel: null, questionLabel: "4", partLabel: null, page: 1, answer: "first" },
+          { sectionLabel: null, questionLabel: "4", partLabel: null, page: 2, answer: "second" },
+        ]),
+      ]);
+      expect(questions[0].answer).toBe("first");
+      expect(unpairedAnswers).toBe(1);
     });
   });
 });

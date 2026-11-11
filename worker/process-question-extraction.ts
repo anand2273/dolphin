@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import {
   attachments,
@@ -71,10 +71,18 @@ export async function processQuestionExtraction(job: QuestionExtractionJob): Pro
   if (!imp) return; // deleted since enqueue: nothing to do, nothing worth retrying
   if (imp.status === "done") return; // redelivered after commit
 
-  await db
+  // Every status write outside the write transaction is conditional on not
+  // being done: `done` must be terminal, because the transaction's FOR UPDATE
+  // re-check is the only thing standing between a duplicate delivery and a
+  // second full set of questions, and it only works if nothing can move a
+  // row back out of `done`.
+  const notDone = and(eq(questionImports.id, importId), ne(questionImports.status, "done"));
+  const claimed = await db
     .update(questionImports)
     .set({ status: "processing", error: null, updatedAt: new Date() })
-    .where(eq(questionImports.id, importId));
+    .where(notDone)
+    .returning({ id: questionImports.id });
+  if (!claimed.length) return; // another delivery committed between our read and here
 
   try {
     const [syllabus] = await db
@@ -232,7 +240,7 @@ export async function processQuestionExtraction(job: QuestionExtractionJob): Pro
     await db
       .update(questionImports)
       .set({ status: "failed", error: message, updatedAt: new Date() })
-      .where(eq(questionImports.id, importId));
+      .where(notDone);
     throw error; // BullMQ's retry/backoff decides what happens next
   }
 }

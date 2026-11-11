@@ -173,10 +173,15 @@ export async function retryQuestionImport(importId: string): Promise<void> {
   }
   if (imp.status !== "failed") return;
 
-  await db
+  // Conditional, not a blind write: between the read above and here a BullMQ
+  // retry of the same import may already have succeeded, and moving a done
+  // import back to pending would re-run it into duplicate questions.
+  const reopened = await db
     .update(questionImports)
     .set({ status: "pending", error: null, updatedAt: new Date() })
-    .where(eq(questionImports.id, imp.id));
+    .where(and(eq(questionImports.id, imp.id), eq(questionImports.status, "failed")))
+    .returning({ id: questionImports.id });
+  if (!reopened.length) return;
 
   try {
     await enqueueQuestionExtraction({ importId: imp.id });

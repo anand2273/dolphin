@@ -13,8 +13,17 @@ export const MAX_QUESTIONS_PER_CHUNK = 60;
 export const MAX_PARTS_PER_QUESTION = 30;
 export const MAX_FIGURES_PER_QUESTION = 10;
 
-// Gemini emits null for optional fields it has nothing for; accept both.
-const optionalText = (max: number) => z.string().max(max).nullish();
+// Text fields TRUNCATE rather than reject: one over-long field must never fail
+// a whole chunk (and, at temperature 0, every retry of it). Gemini emits null
+// for optional fields it has nothing for; accept both.
+const text = (max: number) => z.string().transform((s) => s.slice(0, max));
+const optionalText = (max: number) => text(max).nullish();
+// A nonsense mark (negative, fractional, absurd) becomes "no mark", not a failure.
+const marks = z
+  .number()
+  .nullish()
+  // undefined (not null) keeps the key optional in the inferred type; merge maps it to null.
+  .transform((n) => (n != null && Number.isInteger(n) && n >= 0 && n <= 1000 ? n : undefined));
 
 /** Per job, because the allowed handles ARE the syllabus. */
 export function makeQuestionChunkSchema(h: QuestionHandles) {
@@ -28,8 +37,9 @@ export function makeQuestionChunkSchema(h: QuestionHandles) {
       .array(
         z.object({
           sectionLabel: optionalText(200),
-          label: z.string().min(1).max(50),
-          stem: z.string().max(20_000),
+          // May be empty: an unnumbered "Challenge" item is still a question.
+          label: text(50),
+          stem: text(20_000),
           topicRef,
           conceptRefs: z.array(conceptRef).default([]),
           startPage: z.number().int(),
@@ -46,9 +56,9 @@ export function makeQuestionChunkSchema(h: QuestionHandles) {
           parts: z
             .array(
               z.object({
-                label: z.string().max(50),
-                body: z.string().max(10_000),
-                marks: z.number().int().min(0).max(1000).nullish(),
+                label: text(50),
+                body: text(10_000),
+                marks,
                 answer: optionalText(10_000),
               }),
             )
@@ -61,13 +71,17 @@ export function makeQuestionChunkSchema(h: QuestionHandles) {
       .array(
         z.object({
           sectionLabel: optionalText(200),
-          questionLabel: z.string().min(1).max(50),
+          questionLabel: text(50),
           partLabel: optionalText(50),
           page: z.number().int(),
-          answer: z.string().min(1).max(10_000),
+          answer: text(10_000),
         }),
       )
-      .default([]),
+      .default([])
+      // A blank key line carries nothing to pair; drop it rather than fail.
+      .transform((answers) =>
+        answers.filter((a) => a.questionLabel.trim() !== "" && a.answer.trim() !== ""),
+      ),
   });
 }
 
@@ -207,8 +221,13 @@ export function buildQuestionResponseSchema(h: QuestionHandles) {
  * tokens) because LaTeX matrices legitimately repeat tokens like '&' and '0'.
  */
 export function isDegenerateQuestions(result: QuestionChunkResult): boolean {
+  // The stem is part of the key: a real repetition loop repeats content, while
+  // restarted numbering (two sections of 1-5 with the heading missed) repeats
+  // only labels and must not fail the import.
   const keys = result.questions.map(
-    (q) => `${(q.sectionLabel ?? "").trim().toLowerCase()}|${q.label.trim().toLowerCase()}`,
+    (q) =>
+      `${(q.sectionLabel ?? "").trim().toLowerCase()}|${q.label.trim().toLowerCase()}|` +
+      q.stem.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 200),
   );
   if (keys.length >= 8 && new Set(keys).size <= keys.length / 2) return true;
 

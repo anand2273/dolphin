@@ -95,6 +95,32 @@ describe("makeQuestionChunkSchema", () => {
     ).not.toThrow();
   });
 
+  it("accepts an unnumbered question (empty label) instead of failing the chunk", () => {
+    expect(schema.safeParse({ questions: [question({ label: "" })] }).success).toBe(true);
+  });
+
+  it("drops blank answer-key entries instead of failing the chunk", () => {
+    const parsed = schema.parse({
+      questions: [],
+      answers: [
+        { questionLabel: "", page: 1, answer: "x" },
+        { questionLabel: "3", page: 1, answer: "   " },
+        { questionLabel: "4", page: 1, answer: "y = 2" },
+      ],
+    });
+    expect(parsed.answers.map((a) => a.questionLabel)).toEqual(["4"]);
+  });
+
+  it("truncates oversized text fields instead of rejecting the chunk", () => {
+    const parsed = schema.parse({
+      questions: [question({ sectionLabel: "S".repeat(500), label: "1".repeat(80), stem: "x".repeat(30_000) })],
+    });
+    const q = parsed.questions[0];
+    expect(q.sectionLabel).toHaveLength(200);
+    expect(q.label).toHaveLength(50);
+    expect(q.stem).toHaveLength(20_000);
+  });
+
   it("rejects a topic handle that is not in this syllabus", () => {
     expect(schema.safeParse({ questions: [question({ topicRef: "T42" })] }).success).toBe(false);
   });
@@ -148,6 +174,13 @@ describe("isDegenerateQuestions", () => {
     expect(
       isDegenerateQuestions(result(Array.from({ length: 10 }, () => question({ label: "3" })))),
     ).toBe(true);
+  });
+
+  it("does NOT flag restarted numbering with distinct stems when the model dropped the section label", () => {
+    const qs = ["A", "B"].flatMap((s) =>
+      Array.from({ length: 5 }, (_, i) => question({ label: String(i + 1), stem: `${s}: item ${i + 1}` })),
+    );
+    expect(isDegenerateQuestions(result(qs))).toBe(false);
   });
 
   it("does NOT flag repeated numbering under different section labels", () => {
