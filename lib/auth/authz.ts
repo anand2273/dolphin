@@ -1,7 +1,13 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { classes, concepts, enrollments, syllabuses } from "@/lib/db/schema";
+import {
+  classes,
+  concepts,
+  enrollments,
+  questionImports,
+  syllabuses,
+} from "@/lib/db/schema";
 
 /**
  * THE single authorization helper (CLAUDE.md security invariant).
@@ -147,4 +153,32 @@ export async function assertConceptsOwned(
 
   // Any shortfall is a failure, and we never say which id was the problem.
   if (rows.length !== unique.length) throw new AuthzError();
+}
+
+export type QuestionImport = InferSelectModel<typeof questionImports>;
+
+/**
+ * Same shape as assertSyllabusOwner: the question bank is tutor-private and
+ * students have no relationship to it at all. A soft-deleted import, or one
+ * whose syllabus was soft-deleted, is indistinguishable from "not yours".
+ */
+export async function assertQuestionImportOwner(
+  userId: string,
+  importId: string,
+): Promise<QuestionImport> {
+  const [row] = await db
+    .select({ imp: questionImports })
+    .from(questionImports)
+    .innerJoin(syllabuses, eq(syllabuses.id, questionImports.syllabusId))
+    .where(
+      and(
+        eq(questionImports.id, importId),
+        isNull(questionImports.deletedAt),
+        isNull(syllabuses.deletedAt),
+      ),
+    )
+    .limit(1);
+
+  if (!row || row.imp.tutorId !== userId) throw new AuthzError();
+  return row.imp;
 }
