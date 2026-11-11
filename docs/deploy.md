@@ -57,27 +57,29 @@ by hand would need a backfill first.
 
 ## 3. Create the storage buckets
 
-There are **two**, both private, both declared in `supabase/config.toml` — so
-neither needs to be hand-built:
+There are **three**, all private, all declared in `supabase/config.toml` — so
+none needs to be hand-built:
 
 | Bucket | Holds | Declared at | MIME list |
 |---|---|---|---|
 | `materials` | session materials and submissions | `config.toml:125` | `lib/storage/config.ts:26` |
 | `syllabus-documents` | uploaded syllabus source documents | `config.toml:147` | `lib/storage/config.ts:59` |
+| `question-documents` | question-import PDFs and (slice 3) figure-crop PNGs | `config.toml:159` | `lib/storage/config.ts:86` (imports; crops add PNG in slice 3) |
 
 ```bash
 npx supabase seed buckets --linked
 ```
 
 That creates every bucket in `config.toml`, and is safe to re-run. Confirm in
-the dashboard → Storage that **both** exist, **neither** is public, and both
-show a 25 MiB limit. If either reports public, stop and fix it — every download
+the dashboard → Storage that **all three** exist, **none** is public, and each
+shows a 25 MiB limit. If any reports public, stop and fix it — every download
 in the app assumes the bucket is private and that signed URLs are the only way
 in.
 
-`syllabus-documents` is the newer of the two and is easy to miss if you ran
-this step before it existed: nothing warns you, and the symptom is `Bucket not
-found` on the first syllabus upload. Re-run the command rather than assuming a
+`syllabus-documents` and `question-documents` are newer than `materials` and
+easy to miss if you ran this step before they existed: nothing warns you, and
+the symptom is `Bucket not found` on the first upload into the missing one
+(`question-documents` allows only `application/pdf` and `image/png`). Re-run the command rather than assuming a
 project set up earlier has it.
 
 Fallback, if the CLI misbehaves — dashboard → Storage → New bucket, once per

@@ -18,7 +18,7 @@ v1 is a **session-centric file and homework system**. The AI layer (material gen
 
 Auto-marking, analytics dashboards, note editing, payments or invoicing, calendar sync, scheduling, notifications beyond one transactional email, in-app messaging, mobile apps, multi-tutor agencies or orgs, admin panels.
 
-**LLM calls are permitted for exactly one purpose**: mining topics and concepts out of a tutor-uploaded syllabus document (see Syllabus below). *Decided 2026-08: this is the one deliberate exception to the original "no LLM calls of any kind" rule — the syllabus-creation stage is the next thing being built after v1, not part of v1 itself.* No other AI feature (auto-marking, generation, analytics, retrieval over materials) is in scope until each is separately greenlit.
+**LLM calls are permitted for exactly two purposes**: (1) mining topics and concepts out of a tutor-uploaded syllabus document (see Syllabus below), and (2) *question extraction* — transcribing the questions in a tutor-uploaded PDF and tagging each against that tutor's own syllabus (see Question extraction below). *Decided 2026-08 for (1): the one deliberate exception to the original "no LLM calls of any kind" rule. Decided 2026-11-11 for (2): greenlit for the question bank.* Both transcribe or organise what the tutor uploaded; neither invents content. No other AI feature (generating or solving questions, auto-marking, analytics, retrieval over materials, embeddings) is in scope until each is separately greenlit.
 
 *Embedding-based concept deduplication was greenlit on 2026-08-06 and then **withdrawn on measurement**, before any code was written.* Calibrated against the real 736-concept corpus, plain string normalisation (singularise, unify apostrophes, sort tokens) found 45 of the 58 merges embeddings found, with better precision and better recall on plurals — no API call, no pgvector, no threshold. The evidence, including which embedding models are dead and why descriptions make it worse, is in [`docs/superpowers/specs/2026-08-06-concept-dedup-design.md`](docs/superpowers/specs/2026-08-06-concept-dedup-design.md). **Read that before proposing embeddings here again.**
 
@@ -47,7 +47,11 @@ If a task appears to require any of the above, **stop and ask** rather than buil
 | **Tombstone** | A concept row soft-deleted by a merge, with `merged_into_id` pointing at the survivor it was merged into. Exists so a name that was merged away can be recognised on a later syllabus upload instead of being recreated. |
 | **Syllabus** | An optional curriculum, tutor-owned and independent of any class (e.g. "CIE IGCSE Mathematics 0580") — a class without one is fully functional. Populated by uploading a document (LLM-extracted into topics/concepts), by hand, or from a Preset. *`classes.syllabus_id` — attaching a syllabus to a class — is not yet built; this is currently a standalone resource.* |
 | **Preset** | A backend-authored syllabus template for a commonly tutored curriculum (e.g. Singapore's PSLE Mathematics). Lives as a static code fixture, not a database row. Selecting one deep-copies it into a new, fully independent tutor-owned syllabus. |
-| **Library** | *(future — no code yet)* The tutor's own separate destination holding syllabus-scoped, reusable materials and, later, the question bank. A library material reaches students only by being attached to a session. |
+| **Library** | *(future — no code yet)* The tutor's own separate destination holding syllabus-scoped, reusable materials and the question bank (which already exists, on the syllabus, with no Library UI yet). A library material reaches students only by being attached to a session. |
+| **Question** | A bank item: a stem (Markdown + LaTeX), its figures, exactly one topic (or untagged) and any concepts, all from one syllabus. Tutor-private and syllabus-scoped. Extraction only ever writes `draft`; the tutor approves. Students never read a question directly. |
+| **Question part** | An ordered sub-part of a question — `(a)(i)` — with its own text, marks and answer. Never a bank item on its own; it lives and dies with its question. |
+| **Question import** | One tutor-uploaded PDF and its extraction status (`pending → processing → done/failed`). A syllabus has many. |
+| **Figure** | A diagram owned by a question. Gemini suggests a box on a source page; the tutor confirms the crop, which becomes an attachment. A question cannot be approved while a figure is unconfirmed. |
 
 Never introduce synonyms. If a new concept is genuinely needed, add it to this table in the same commit.
 
@@ -264,6 +268,40 @@ pnpm test:syllabus-pipeline --cleanup                               # wipe test 
 
 Run `pnpm worker:dev` in another terminal to actually process what it enqueues.
 
+## Question extraction (async worker)
+
+The question bank is built by the same worker, on a second queue
+(`question-extraction`). Design and rationale:
+[`docs/superpowers/specs/2026-11-11-question-bank-design.md`](docs/superpowers/specs/2026-11-11-question-bank-design.md).
+
+- **The syllabus is a closed vocabulary, not prose context.** At job start the
+  worker gives each live topic and concept a per-job handle (`T1…`, `C1…`,
+  `worker/question-handles.ts`), lists them in the prompt, and constrains
+  `topicRef`/`conceptRefs` in the `responseSchema` to `enum`s of those handles
+  plus `NONE`. The model can never invent a tag and nothing fuzzy-matches a
+  name. A syllabus with no concepts omits `conceptRefs` entirely — Gemini
+  rejects an empty enum. A syllabus with no topics is refused at upload and
+  fails the job (`NO_TOPICS_MESSAGE`).
+- **The job payload is `{ importId }` only.** Tutor, syllabus and document are
+  re-read from the `question_imports` row; the queue is an authz boundary.
+- **PDF-only**, chunked by the same `pdf-chunk.ts` (3 pages, 1 overlap).
+  `worker/merge-questions.ts` dedupes an overlap duplicate only when the
+  normalised `(section, label)` matches **and** page ranges intersect — the
+  same number far apart is two sections restarting their numbering. Answer-key
+  entries are paired after the merge, never inside a model call; inline answers
+  win; unpaired ones are counted on `question_imports.note`.
+- **Same guards as topic extraction, separately tuned**: `maxOutputTokens`
+  16384 (verbatim LaTeX is verbose), `isDegenerateQuestions` with deliberately
+  conservative long-field thresholds because LaTeX matrices repeat tokens.
+- **Everything lands as a draft.** Slice 1 (this) has no UI; review/approve is
+  slice 2, figure-crop confirmation (`pdfjs-dist`) slice 3.
+
+```
+pnpm test:question-pipeline <file.pdf> --syllabus <syllabusId>   # upload + enqueue as that syllabus's tutor
+pnpm test:question-pipeline --status <importId>                  # print the extracted drafts
+pnpm test:question-pipeline --cleanup <syllabusId>               # hard-delete that syllabus's imports + questions
+```
+
 ### Local Redis
 
 `pnpm redis:start` / `pnpm redis:stop` run a `dolphn-redis` Docker container
@@ -350,9 +388,13 @@ whether to merge them. Nothing here runs automatically.
   before it existed. `pairKey()`/the sorted pair in `rejectCluster` and the
   table's `CHECK (concept_a_id < concept_b_id)` all rely on plain string `<`
   agreeing on the same canonical order.
+- `mergeConcepts` repoints **`question_concepts`** exactly as it repoints
+  `topic_concepts`, in the same transaction. Without it a merge silently untags
+  every question that carried the loser.
 - No undo in v1. Clearing `merged_into_id` and `deleted_at` would restore a
-  tombstoned concept, but its `topic_concepts` links were already repointed to
-  the survivor at merge time and are not recoverable from the tombstone alone.
+  tombstoned concept, but its `topic_concepts`/`question_concepts` links were
+  already repointed to the survivor at merge time and are not recoverable from
+  the tombstone alone.
 
 ## Documentation
 
@@ -384,14 +426,17 @@ Settled and in production. No new dependencies without asking.
 
 Boring and well-trodden is the point.
 
-**Syllabus-extraction-only additions** (2026-08, greenlit alongside the LLM
-carve-out above — not part of the "boring and well-trodden" v1 stack, and not a
+**Worker-only additions** (2026-08 for syllabus extraction, reused 2026-11 for
+question extraction; greenlit alongside the LLM carve-outs above — not part of the "boring and well-trodden" v1 stack, and not a
 precedent for adding AI tooling elsewhere without asking again):
 
 - `@google/generative-ai` (Gemini) — only ever imported from `worker/`, never
   from `app/` or `lib/` the Next.js app touches
 - BullMQ + Redis (`ioredis`) — job queue between the Next app (producer) and
   the worker (consumer)
+- **Approved 2026-11-11, not yet installed:** `katex` (render LaTeX in the
+  question review UI, slice 2) and `pdfjs-dist` (client-side page rendering for
+  figure-crop confirmation, slice 3).
 - `pdf-lib` — only ever imported from `worker/pdf-chunk.ts`, used to slice an
   uploaded PDF into page-range sub-documents for structural chunking (see
   Syllabus extraction above)
@@ -426,6 +471,7 @@ pnpm redis:stop
 pnpm worker:dev     # syllabus-extraction worker, watch mode (needs REDIS_URL, GEMINI_API_KEY)
 pnpm worker:start   # same, no watch — what production runs
 pnpm test:syllabus-pipeline   # seed/status/cleanup a real extraction test, no UI needed
+pnpm test:question-pipeline   # same for question extraction (needs an existing syllabus with topics)
 ```
 
 Two ways to lose an afternoon here:
@@ -455,14 +501,14 @@ app/
 lib/
   auth/                 # session, roles, guards, request origin, recovery gate, THE authz helper
   db/
-    schema.ts           # all 18 tables
+    schema.ts           # all 23 tables
     queries/            # all reads — each authorizes before returning rows
     migrations/         # drizzle-owned; there is no supabase/migrations
   storage/              # private buckets (materials, syllabus-documents), opaque keys, signed URLs
   queue/                # BullMQ producer side — enqueues jobs, never processes one
   syllabus-presets/      # static preset fixtures, not DB rows
   validation/           # zod schemas
-worker/                 # standalone process: consumes the syllabus-extraction queue, calls Gemini
+worker/                 # standalone process: consumes the syllabus- and question-extraction queues, calls Gemini
 components/             # shell (top-bar, page, auth-card), forms, date rendering
   ui/                   # shadcn primitives + the app's own (panel/row, pill, ext-chip, form-dialog)
 tests/                  # authz tests, negatives included
@@ -497,7 +543,7 @@ design doc referenced at the top of this file.
 
 ## Testing
 
-- Every authorization rule gets a test, and the suite must include **negative** cases: student A cannot read student B's submission; tutor A cannot read tutor B's class; a student cannot issue an assignment. 136 tests today, mostly authorization; the rest are pure unit tests (concept normalisation/clustering, worker extraction, identity headers).
+- Every authorization rule gets a test, and the suite must include **negative** cases: student A cannot read student B's submission; tutor A cannot read tutor B's class; a student cannot issue an assignment. 207 tests today, mostly authorization; the rest are pure unit tests (concept normalisation/clustering, worker extraction, question handles/merge, identity headers).
 - One Playwright happy path end to end: tutor creates class → invites student → creates session → uploads material → issues assignment; student accepts invite → downloads material → submits → tutor sees the submission. **Not built yet** — `pnpm test:e2e` has no config or specs behind it. Coverage today is unit-level authz plus manual verification.
 
 ## Working agreement

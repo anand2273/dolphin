@@ -22,7 +22,8 @@
     "redis:stop": "docker stop dolphn-redis",
     "worker:dev": "tsx watch worker/index.ts",
     "worker:start": "tsx worker/index.ts",
-    "test:syllabus-pipeline": "tsx scripts/test-syllabus-pipeline.ts"
+    "test:syllabus-pipeline": "tsx scripts/test-syllabus-pipeline.ts",
+    "test:question-pipeline": "tsx scripts/test-question-pipeline.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
