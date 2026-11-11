@@ -29,6 +29,13 @@
       "when": 1786039024068,
       "tag": "0003_mixed_radioactive_man",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794425583689,
+      "tag": "0004_useful_squirrel_girl",
+      "breakpoints": true
     }
   ]
 }

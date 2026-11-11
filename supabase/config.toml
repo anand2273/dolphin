@@ -154,6 +154,16 @@ allowed_mime_types = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ]
 
+# Private: the question bank. PDFs are question imports; PNGs are
+# tutor-confirmed figure crops (slice 3). Duplicates lib/storage/config.ts.
+[storage.buckets.question-documents]
+public = false
+file_size_limit = "25MiB"
+allowed_mime_types = [
+  "application/pdf",
+  "image/png",
+]
+
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true

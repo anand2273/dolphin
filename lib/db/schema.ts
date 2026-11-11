@@ -112,6 +112,21 @@ export const syllabusExtractionStatus = pgEnum("syllabus_extraction_status", [
   "failed",
 ]);
 
+/**
+ * Progress of one uploaded question document through the async worker. Lives
+ * on `question_imports`, not on `syllabuses`: a syllabus collects many papers,
+ * each with its own outcome.
+ */
+export const questionImportStatus = pgEnum("question_import_status", [
+  "pending",
+  "processing",
+  "done",
+  "failed",
+]);
+
+/** Draft-then-approve: extraction only ever writes drafts; the tutor approves. */
+export const questionStatus = pgEnum("question_status", ["draft", "approved"]);
+
 /* -------------------------------------------------------------------------- */
 /* profiles — one row per Supabase auth user                                   */
 /* -------------------------------------------------------------------------- */
@@ -609,6 +624,135 @@ export const conceptMergeRejections = pgTable(
       sql`${t.conceptAId} < ${t.conceptBId}`,
     ),
   ],
+);
+
+/* -------------------------------------------------------------------------- */
+/* Question bank — syllabus-scoped, tutor-private. See                         */
+/* docs/superpowers/specs/2026-11-11-question-bank-design.md.                  */
+/* -------------------------------------------------------------------------- */
+
+/** [ymin, xmin, ymax, xmax], each 0–1000, normalised to the page. Gemini's convention. */
+export type Box2d = [number, number, number, number];
+
+export const questionImports = pgTable(
+  "question_imports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    syllabusId: uuid("syllabus_id")
+      .notNull()
+      .references(() => syllabuses.id, { onDelete: "cascade" }),
+    tutorId: uuid("tutor_id")
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    sourceAttachmentId: uuid("source_attachment_id")
+      .notNull()
+      .references(() => attachments.id, { onDelete: "restrict" }),
+    status: questionImportStatus("status").notNull().default("pending"),
+    error: text("error"),
+    // Non-fatal outcome worth showing the tutor, e.g. unmatched answer-key entries.
+    note: text("note"),
+    ...timestamps,
+    ...softDelete,
+  },
+  (t) => [index("question_imports_syllabus_id_idx").on(t.syllabusId)],
+);
+
+export const questions = pgTable(
+  "questions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    syllabusId: uuid("syllabus_id")
+      .notNull()
+      .references(() => syllabuses.id, { onDelete: "cascade" }),
+    // Denormalised from the syllabus so ownership checks don't need a join (as topics).
+    tutorId: uuid("tutor_id")
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    // Null for a question typed in by hand (later slice).
+    importId: uuid("import_id").references(() => questionImports.id, {
+      onDelete: "set null",
+    }),
+    // Null = untagged; the tutor assigns one before approving. Topics are
+    // soft-deleted in practice, so readers must treat a dead topic as untagged.
+    topicId: uuid("topic_id").references(() => topics.id, { onDelete: "set null" }),
+    sectionLabel: text("section_label"),
+    label: text("label").notNull(),
+    // Markdown + LaTeX, with "[figure n]" placeholders matching question_figures.order_index + 1.
+    stem: text("stem").notNull(),
+    status: questionStatus("status").notNull().default("draft"),
+    sourcePageStart: integer("source_page_start"),
+    sourcePageEnd: integer("source_page_end"),
+    orderIndex: integer("order_index"),
+    ...timestamps,
+    ...softDelete,
+  },
+  (t) => [
+    index("questions_syllabus_id_idx").on(t.syllabusId),
+    index("questions_topic_id_idx").on(t.topicId),
+  ],
+);
+
+/**
+ * Parts are never independently user-deleted: they live and die with their
+ * question (which is soft-deleted), so no deleted_at here. A question with no
+ * parts but an answer stores it on one part with an empty label and body, so
+ * `answer` has exactly one home.
+ */
+export const questionParts = pgTable(
+  "question_parts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    questionId: uuid("question_id")
+      .notNull()
+      .references(() => questions.id, { onDelete: "cascade" }),
+    label: text("label").notNull().default(""),
+    body: text("body").notNull().default(""),
+    marks: integer("marks"),
+    answer: text("answer"),
+    orderIndex: integer("order_index").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    index("question_parts_question_id_idx").on(t.questionId),
+    check("question_parts_marks_nonneg", sql`${t.marks} is null or ${t.marks} >= 0`),
+  ],
+);
+
+/** Concept merges repoint these too — see mergeConcepts in app/(tutor)/concepts/actions.ts. */
+export const questionConcepts = pgTable(
+  "question_concepts",
+  {
+    questionId: uuid("question_id")
+      .notNull()
+      .references(() => questions.id, { onDelete: "cascade" }),
+    conceptId: uuid("concept_id")
+      .notNull()
+      .references(() => concepts.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.questionId, t.conceptId] })],
+);
+
+/**
+ * A diagram belonging to a question. `suggestedBox` is Gemini's guess (null if
+ * it gave nothing usable); `attachmentId` stays null until the tutor confirms a
+ * crop (slice 3). Approval requires every figure to have an attachment.
+ */
+export const questionFigures = pgTable(
+  "question_figures",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    questionId: uuid("question_id")
+      .notNull()
+      .references(() => questions.id, { onDelete: "cascade" }),
+    page: integer("page").notNull(), // absolute, 1-indexed, in the import's source PDF
+    suggestedBox: jsonb("suggested_box").$type<Box2d>(),
+    attachmentId: uuid("attachment_id").references(() => attachments.id, {
+      onDelete: "restrict",
+    }),
+    orderIndex: integer("order_index").notNull(),
+    ...timestamps,
+  },
+  (t) => [index("question_figures_question_id_idx").on(t.questionId)],
 );
 
 /* -------------------------------------------------------------------------- */
