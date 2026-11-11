@@ -6,9 +6,16 @@ import {
   type SyllabusExtractionJob,
 } from "@/lib/queue/syllabus-extraction";
 import { processSyllabusExtraction } from "./process-syllabus-extraction";
+import {
+  QUESTION_EXTRACTION_QUEUE,
+  type QuestionExtractionJob,
+} from "@/lib/queue/question-extraction";
+import { processQuestionExtraction } from "./process-question-extraction";
 
 /**
- * Standalone worker process. Deliberately NOT part of the Next.js app — Vercel
+ * Standalone worker process consuming two queues: syllabus extraction
+ * (topics/concepts) and question extraction (the question bank). Deliberately
+ * NOT part of the Next.js app — Vercel
  * cannot host a persistent process, so this runs as its own always-on
  * deployment (Railway suggested) alongside its own Redis instance. Run with
  * `pnpm worker:dev` locally, or `pnpm worker:start` in production.
@@ -26,7 +33,7 @@ if (!redisUrl) {
 // `maxRetriesPerRequest: null` IS required here and must not be tidied away:
 // a Worker holds a blocking connection, and BullMQ enforces it for those. The
 // producer side deliberately does not copy this — see the comment in
-// lib/queue/syllabus-extraction.ts for why null there caused a hung upload.
+// lib/queue/connection.ts for why null there caused a hung upload.
 const connection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
 
 const worker = new Worker<SyllabusExtractionJob>(
@@ -49,3 +56,27 @@ worker.on("failed", (job, err) => {
 });
 
 console.log("[syllabus-extraction] worker started, waiting for jobs");
+
+// Its own blocking connection, same options as above and for the same reason.
+const questionConnection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
+
+const questionWorker = new Worker<QuestionExtractionJob>(
+  QUESTION_EXTRACTION_QUEUE,
+  async (job) => {
+    await processQuestionExtraction(job.data);
+  },
+  { connection: questionConnection, concurrency: 2 },
+);
+
+questionWorker.on("completed", (job) => {
+  console.log(`[question-extraction] done — import ${job.data.importId}`);
+});
+
+questionWorker.on("failed", (job, err) => {
+  console.error(
+    `[question-extraction] failed — import ${job?.data.importId ?? "unknown"}`,
+    err,
+  );
+});
+
+console.log("[question-extraction] worker started, waiting for jobs");
