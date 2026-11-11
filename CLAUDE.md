@@ -153,7 +153,8 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
 - Deleting a material is a soft delete; the object stays in the bucket. Student
   work and tutor uploads are not recoverable once the bytes are gone.
 - **`lib/storage/objects.ts` takes the bucket explicitly** — there is more than
-  one private bucket now (`materials`, `syllabus-documents`), each declared the
+  one private bucket now (`materials`, `syllabus-documents`,
+  `question-documents`), each declared the
   same twice-over way in `supabase/config.toml` + `lib/storage/config.ts`.
 
 ## Syllabus extraction (async worker)
@@ -299,7 +300,7 @@ The question bank is built by the same worker, on a second queue
 ```
 pnpm test:question-pipeline <file.pdf> --syllabus <syllabusId>   # upload + enqueue as that syllabus's tutor
 pnpm test:question-pipeline --status <importId>                  # print the extracted drafts
-pnpm test:question-pipeline --cleanup <syllabusId>               # hard-delete that syllabus's imports + questions
+pnpm test:question-pipeline --cleanup <importId>                 # hard-delete ONE import and its questions (local DB only)
 ```
 
 ### Local Redis
@@ -468,7 +469,7 @@ pnpm sb:start       # local Supabase stack
 pnpm sb:stop
 pnpm redis:start    # local Redis (Docker), for the syllabus-extraction queue
 pnpm redis:stop
-pnpm worker:dev     # syllabus-extraction worker, watch mode (needs REDIS_URL, GEMINI_API_KEY)
+pnpm worker:dev     # syllabus- and question-extraction worker, watch mode (needs REDIS_URL, GEMINI_API_KEY)
 pnpm worker:start   # same, no watch — what production runs
 pnpm test:syllabus-pipeline   # seed/status/cleanup a real extraction test, no UI needed
 pnpm test:question-pipeline   # same for question extraction (needs an existing syllabus with topics)
@@ -504,7 +505,7 @@ lib/
     schema.ts           # all 23 tables
     queries/            # all reads — each authorizes before returning rows
     migrations/         # drizzle-owned; there is no supabase/migrations
-  storage/              # private buckets (materials, syllabus-documents), opaque keys, signed URLs
+  storage/              # private buckets (materials, syllabus-documents, question-documents), opaque keys, signed URLs
   queue/                # BullMQ producer side — enqueues jobs, never processes one
   syllabus-presets/      # static preset fixtures, not DB rows
   validation/           # zod schemas
@@ -543,7 +544,7 @@ design doc referenced at the top of this file.
 
 ## Testing
 
-- Every authorization rule gets a test, and the suite must include **negative** cases: student A cannot read student B's submission; tutor A cannot read tutor B's class; a student cannot issue an assignment. 207 tests today, mostly authorization; the rest are pure unit tests (concept normalisation/clustering, worker extraction, question handles/merge, identity headers).
+- Every authorization rule gets a test, and the suite must include **negative** cases: student A cannot read student B's submission; tutor A cannot read tutor B's class; a student cannot issue an assignment. 218 tests today, mostly authorization; the rest are pure unit tests (concept normalisation/clustering, worker extraction, question handles/merge, identity headers).
 - One Playwright happy path end to end: tutor creates class → invites student → creates session → uploads material → issues assignment; student accepts invite → downloads material → submits → tutor sees the submission. **Not built yet** — `pnpm test:e2e` has no config or specs behind it. Coverage today is unit-level authz plus manual verification.
 
 ## Working agreement

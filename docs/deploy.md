@@ -298,9 +298,11 @@ The same value goes on both hosts — Vercel (step 7) and the worker (9c).
   Every BullMQ operation is a round trip.
 
 Upstash bills per command, and an idle BullMQ worker issues blocking poll
-commands continuously — roughly 3k/day per worker against the free tier's
-10k/day. Fine at one worker; check the usage graph after a few days rather
-than assuming idle means free.
+commands continuously — roughly 3k/day per BullMQ `Worker` against the free
+tier's 10k/day. The worker process now runs **two** (syllabus extraction and
+question extraction), so expect ~6k/day idle — still inside the free tier but
+with much less headroom. Check the usage graph after a few days rather than
+assuming idle means free.
 
 **Do not add `family: 0` to either connection.** It exists to make Node accept
 an AAAA answer, which is only needed on an IPv6-only private network such as
@@ -366,9 +368,10 @@ Deploy the worker first and watch its log for:
 
 ```
 [syllabus-extraction] worker started, waiting for jobs
+[question-extraction] worker started, waiting for jobs
 ```
 
-That line proves the worker's `REDIS_URL`, TLS and Upstash auth are all good.
+Both lines must appear (one per queue). Together they prove the worker's `REDIS_URL`, TLS and Upstash auth are all good.
 Then put the **same** `REDIS_URL` into Vercel (step 7), redeploy, and upload a
 syllabus document at `/syllabi`.
 
