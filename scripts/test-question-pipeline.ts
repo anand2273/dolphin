@@ -1,7 +1,7 @@
 import "../worker/env";
 
 import { readFile } from "node:fs/promises";
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import {
   attachments,
@@ -27,10 +27,31 @@ import { enqueueQuestionExtraction } from "@/lib/queue/question-extraction";
  *
  *   pnpm test:question-pipeline <file.pdf> --syllabus <syllabusId>
  *   pnpm test:question-pipeline --status <importId>
- *   pnpm test:question-pipeline --cleanup <syllabusId>   # hard-deletes that syllabus's imports + questions
+ *   pnpm test:question-pipeline --cleanup <importId>     # hard-deletes ONE import and only its questions
  *
+ * Refuses to touch anything but a local database: cleanup HARD-deletes, which
+ * the soft-delete rule forbids for real data, and seed writes rows as the
+ * syllabus's real tutor.
  * Run `pnpm worker:dev` in another terminal to process what this enqueues.
  */
+
+const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+
+function assertLocalDatabase() {
+  const url = process.env.DATABASE_URL ?? "";
+  let host = "";
+  try {
+    host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+  } catch {
+    /* unparseable: refuse below */
+  }
+  if (!LOCAL_HOSTS.has(host)) {
+    throw new Error(
+      `Refusing to run against a non-local database (host "${host || "unknown"}"). ` +
+        "This harness hard-deletes and writes as real tutors; point DATABASE_URL at local Supabase.",
+    );
+  }
+}
 
 async function seed(filePath: string, syllabusId: string) {
   if (!filePath.toLowerCase().endsWith(".pdf")) throw new Error("Question imports are PDF-only.");
@@ -107,20 +128,28 @@ async function status(importId: string) {
   console.log(`\n${rows.length} question(s).`);
 }
 
-async function cleanup(syllabusId: string) {
-  const imps = await db.select().from(questionImports).where(eq(questionImports.syllabusId, syllabusId));
-  if (!imps.length) return console.log("Nothing to clean up.");
-  const attachmentIds = imps.map((i) => i.sourceAttachmentId);
-  const objs = await db
+/**
+ * Scoped to ONE import, never a whole syllabus: a syllabus also holds questions
+ * from other imports and (later) hand-written and approved ones.
+ */
+async function cleanup(importId: string) {
+  const [imp] = await db.select().from(questionImports).where(eq(questionImports.id, importId)).limit(1);
+  if (!imp) return console.log("No such import.");
+  const [attachment] = await db
     .select({ id: attachments.id, objectKey: attachments.objectKey })
     .from(attachments)
-    .where(inArray(attachments.id, attachmentIds));
+    .where(eq(attachments.id, imp.sourceAttachmentId));
 
-  await db.delete(questions).where(eq(questions.syllabusId, syllabusId)); // parts/figures/tags cascade
-  await db.delete(questionImports).where(eq(questionImports.syllabusId, syllabusId));
-  await db.delete(attachments).where(inArray(attachments.id, attachmentIds));
-  for (const o of objs) await removeObject(QUESTION_DOCUMENTS_BUCKET, o.objectKey);
-  console.log(`Removed ${imps.length} import(s) and their questions.`);
+  const removed = await db
+    .delete(questions)
+    .where(eq(questions.importId, importId)) // parts/figures/tags cascade
+    .returning({ id: questions.id });
+  await db.delete(questionImports).where(eq(questionImports.id, importId));
+  if (attachment) {
+    await db.delete(attachments).where(eq(attachments.id, attachment.id));
+    await removeObject(QUESTION_DOCUMENTS_BUCKET, attachment.objectKey);
+  }
+  console.log(`Removed import ${importId} and its ${removed.length} question(s).`);
 }
 
 async function main() {
@@ -130,12 +159,19 @@ async function main() {
     return i === -1 ? undefined : args[i + 1];
   };
   if (args[0] === "--status") return status(args[1] ?? "");
+  assertLocalDatabase();
   if (args[0] === "--cleanup") return cleanup(args[1] ?? "");
   const syllabusId = flag("--syllabus");
   if (!args[0] || !syllabusId) {
-    throw new Error("usage: <file.pdf> --syllabus <id> | --status <importId> | --cleanup <syllabusId>");
+    throw new Error("usage: <file.pdf> --syllabus <id> | --status <importId> | --cleanup <importId>");
   }
   return seed(args[0], syllabusId);
 }
 
-main().then(() => process.exit(0));
+main().then(
+  () => process.exit(0),
+  (error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  },
+);
