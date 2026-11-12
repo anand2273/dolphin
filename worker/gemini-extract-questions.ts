@@ -1,4 +1,8 @@
-import { GoogleGenerativeAI, type ResponseSchema } from "@google/generative-ai";
+import {
+  GoogleGenerativeAI,
+  type GenerationConfig,
+  type ResponseSchema,
+} from "@google/generative-ai";
 import type { QuestionHandles } from "./question-handles";
 import {
   buildQuestionResponseSchema,
@@ -21,10 +25,24 @@ const MODEL_ID = "gemini-flash-latest";
 
 /**
  * Higher than topic extraction's 8192: verbatim LaTeX transcription of three
- * dense exam pages is far more output than a topic list. Tune against real
- * papers (Task 10); a MAX_TOKENS finish still throws rather than truncating.
+ * dense exam pages is far more output than a topic list. A MAX_TOKENS finish
+ * still throws rather than truncating.
+ *
+ * thinkingBudget is load-bearing. This is a reasoning model and its hidden
+ * thinking is billed against maxOutputTokens. Measured 2026-11-11 on a real
+ * 5-page AP/GP tutorial with thinking uncapped: 15727 thinking tokens, 643
+ * answer tokens, MAX_TOKENS on every attempt (temperature 0 reproduces it).
+ * Transcription needs almost no reasoning. 1024 rather than 0 because some
+ * model generations behind the -latest alias reject a zero budget.
+ * SDK 0.21 doesn't type thinkingConfig; the API accepts it in generationConfig.
  */
-const MAX_OUTPUT_TOKENS = 16_384;
+export const QUESTION_GENERATION_CONFIG = {
+  maxOutputTokens: 16_384,
+  thinkingConfig: { thinkingBudget: 1024 },
+  // 0: overlapping chunks are merged by label, so the same question seen
+  // twice must come back the same way.
+  temperature: 0,
+};
 
 /**
  * The token breakdown is the only thing that tells a MAX_TOKENS finish's three
@@ -99,11 +117,8 @@ export async function extractQuestions(input: {
       // assembles properties dynamically (conceptRefs is conditional), which
       // the SDK's discriminated Schema union can't follow, hence the cast.
       responseSchema: buildQuestionResponseSchema(input.handles) as unknown as ResponseSchema,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-      // 0: overlapping chunks are merged by label, so the same question seen
-      // twice must come back the same way.
-      temperature: 0,
-    },
+      ...QUESTION_GENERATION_CONFIG,
+    } as GenerationConfig,
   });
 
   const result = await model.generateContent([
