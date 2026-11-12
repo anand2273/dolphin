@@ -355,7 +355,15 @@ approve action and its invariant (topic set, every figure cropped), figure-crop
 confirmation, hand-written questions, reads in `lib/db/queries/`. Questions
 reach no student by any path.
 
-**Real-document validation:** *pending — see "Known gaps".*
+**Real-document validation (2026-11-11):** RI H2 Math Tutorial 7B, 5 pages,
+2 chunks — 12/12 questions, all 23 printed answers paired, marks and nested
+parts correct, the one figure boxed in the right place, every question tagged
+to the right topic. Found and fixed on the way: hidden thinking exhausting
+`maxOutputTokens` (now capped), and a duplicate question from a section
+heading the second chunk never saw (now carried forward). Still imperfect: an
+unlabelled trailing sub-part ("Given that…, find n [2]") was folded into the
+part before it. One worksheet-style document with an answer key at the back
+has not been tried yet.
 
 ## Concept deduplication
 
@@ -503,10 +511,10 @@ Ordered by how much they matter.
     deduplication" above) are only checked by reading the code, not by a
     test. This is the same gap the design doc's Testing section called out
     and it was not closed by this work.
-12. **Question extraction is unvalidated on real documents.** The pipeline is
-    tested end to end against the DB with Gemini mocked; prompt quality (LaTeX
-    fidelity, part nesting, topic choice, figure-box accuracy, whether 16384
-    output tokens suffices for 3 dense pages) has not been checked against a
-    real paper or worksheet yet. Do that with `pnpm test:question-pipeline`
-    before building slice 2 on top of it. Cloud: migration `0004` and the
-    `question-documents` bucket are not applied/created there yet.
+12. **Question extraction: one real paper validated, gaps remain.** See the
+    slice-1 section above. Open: (a) a job killed mid-run (worker restart past
+    BullMQ's stalled limit) leaves its import stuck at `processing`, and
+    `retryQuestionImport` only reopens `failed`; (b) the Gemini call has no
+    request timeout, so a stalled connection hangs an attempt; (c) the topic
+    extractor has the same uncapped-thinking exposure. Cloud: migration `0004`
+    and the `question-documents` bucket are not applied/created there yet.

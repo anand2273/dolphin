@@ -294,6 +294,19 @@ The question bank is built by the same worker, on a second queue
 - **Same guards as topic extraction, separately tuned**: `maxOutputTokens`
   16384 (verbatim LaTeX is verbose), `isDegenerateQuestions` with deliberately
   conservative long-field thresholds because LaTeX matrices repeat tokens.
+- **`thinkingConfig.thinkingBudget: 1024` is load-bearing** (*measured
+  2026-11-11*). `gemini-flash-latest` is a reasoning model and its hidden
+  thinking is billed against `maxOutputTokens`. Uncapped, a real 5-page
+  tutorial spent 15727 of 16384 tokens thinking and left 643 for the answer —
+  `MAX_TOKENS` on every attempt. A non-STOP finish now puts the
+  answer/thinking/prompt token split in the error; read it before raising any
+  limit. *`worker/gemini-extract.ts` (topics, 8192 cap) uses the same model
+  with thinking uncapped and is exposed to the same failure.*
+- **Section headings carry forward across chunks.** A chunk that starts past
+  a heading never sees it; without carry-forward the overlap copy of a
+  question keyed differently and survived as a duplicate.
+- **Validated 2026-11-11** on RI H2 Math Tutorial 7B (5 pp.): 12/12 questions,
+  every printed answer paired, marks and parts correct, Fig. 1 boxed.
 - **Everything lands as a draft.** Slice 1 (this) has no UI; review/approve is
   slice 2, figure-crop confirmation (`pdfjs-dist`) slice 3.
 
@@ -312,8 +325,9 @@ taken by an unrelated project's container on the dev machine this was set up
 on; check for a conflict before assuming 6379 is free elsewhere. `.env.local`'s
 `REDIS_URL` must match whichever port is actually used.
 
-**Adding a new private bucket needs a real `supabase stop && supabase start`,
-not just an edit to `supabase/config.toml`.** A `supabase start` that resumes
+**Adding a new private bucket needs `pnpm exec supabase seed buckets --local`
+(or a real `supabase stop && supabase start`), not just an edit to
+`supabase/config.toml`.** A `supabase start` that resumes
 from an existing DB backup does NOT re-run bucket provisioning — only a
 from-scratch init does. Data survives the stop/start (backed up to a Docker
 volume), so this is safe, just non-obvious. (Symptom if skipped: `Bucket not
