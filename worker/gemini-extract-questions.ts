@@ -26,6 +26,31 @@ const MODEL_ID = "gemini-flash-latest";
  */
 const MAX_OUTPUT_TOKENS = 16_384;
 
+/**
+ * The token breakdown is the only thing that tells a MAX_TOKENS finish's three
+ * causes apart: hidden thinking eating the budget (cap thinking), a repetition
+ * loop (the degeneracy guard's job), or genuinely long output (raise the limit
+ * or shrink chunks). It goes into the error so it lands on
+ * question_imports.error and the worker log. SDK 0.21 doesn't type
+ * thoughtsTokenCount though the API returns it; derive it from the total when
+ * it's absent.
+ */
+type Usage = {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  thoughtsTokenCount?: number;
+  totalTokenCount?: number;
+};
+
+export function describeUnfinished(finishReason: string, usage: Usage | undefined): string {
+  if (!usage) return `Gemini did not finish cleanly (${finishReason})`;
+  const prompt = usage.promptTokenCount ?? 0;
+  const answer = usage.candidatesTokenCount ?? 0;
+  const thinking =
+    usage.thoughtsTokenCount ?? Math.max(0, (usage.totalTokenCount ?? 0) - prompt - answer);
+  return `Gemini did not finish cleanly (${finishReason}; answer ${answer}, thinking ${thinking}, prompt ${prompt})`;
+}
+
 const BASE_PROMPT =
   "You transcribe exam and practice questions from a document excerpt into structured data, " +
   "and tag each question against a syllabus.\n\n" +
@@ -92,7 +117,7 @@ export async function extractQuestions(input: {
   const candidate = result.response.candidates?.[0];
   if (!candidate) throw new Error("Gemini returned no candidates");
   if (candidate.finishReason && candidate.finishReason !== "STOP") {
-    throw new Error(`Gemini did not finish cleanly (${candidate.finishReason})`);
+    throw new Error(describeUnfinished(candidate.finishReason, result.response.usageMetadata));
   }
 
   let raw: unknown;
