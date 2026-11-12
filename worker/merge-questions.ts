@@ -90,9 +90,18 @@ export function mergeQuestionChunks(chunks: ChunkInput[]): {
   type Slot = { q: MergedQuestion; key: string; seq: number; lastChunk: number };
   const slots: Slot[] = [];
 
+  // A section heading applies to everything after it until the next one, but
+  // a chunk that starts past the heading never sees it, so the model leaves
+  // sectionLabel empty there. Carry the last heading forward in document
+  // order; otherwise the overlap copy of a question keys differently from the
+  // original and both survive (seen on a real paper, 2026-11-11).
+  let currentSection: string | null = null;
+
   chunks.forEach((chunk, chunkIndex) => {
     for (const raw of chunk.result.questions) {
       const q = toMerged(chunk, raw);
+      if (q.sectionLabel) currentSection = q.sectionLabel;
+      else q.sectionLabel = currentSection;
       const key = keyOf(q.sectionLabel, q.label);
       // An overlap duplicate is the same key, intersecting pages, and a
       // DIFFERENT chunk: one chunk never repeats a question through overlap,

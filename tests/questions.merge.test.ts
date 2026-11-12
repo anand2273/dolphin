@@ -158,6 +158,38 @@ describe("mergeQuestionChunks", () => {
     expect(questions).toHaveLength(2);
   });
 
+  /**
+   * Real paper (RI H2 Math Tutorial 7B, 2026-11-11): chunk 2 (pp.3-5) never
+   * sees the "Section B" heading on p.1, so the model leaves sectionLabel
+   * empty there. Q7 on the overlap page then came out twice, and Q8/Q9 lost
+   * their section.
+   */
+  it("carries a section heading forward to later questions the model left unlabeled", () => {
+    const { questions } = mergeQuestionChunks([
+      chunk(1, 3, [
+        q({ sectionLabel: "Section A", label: "1", startPage: 1, endPage: 1 }),
+        q({ sectionLabel: "Section B", label: "6", startPage: 2, endPage: 2 }),
+        q({ sectionLabel: "Section B", label: "7", startPage: 3, endPage: 3, parts: [{ label: "(a)", body: "a" }] }),
+      ]),
+      chunk(3, 5, [
+        q({ sectionLabel: null, label: "7", startPage: 1, endPage: 1, parts: [{ label: "(a)", body: "a" }, { label: "(b)", body: "b" }] }),
+        q({ sectionLabel: null, label: "8", startPage: 2, endPage: 2 }),
+      ]),
+    ]);
+    expect(questions.map((x) => `${x.sectionLabel}|${x.label}`)).toEqual([
+      "Section A|1",
+      "Section B|6",
+      "Section B|7",
+      "Section B|8",
+    ]);
+    expect(questions[2].parts).toHaveLength(2);
+  });
+
+  it("leaves a worksheet with no sections at all unlabeled", () => {
+    const { questions } = mergeQuestionChunks([chunk(1, 3, [q({ label: "1" }), q({ label: "2", startPage: 2, endPage: 2 })])]);
+    expect(questions.map((x) => x.sectionLabel)).toEqual([null, null]);
+  });
+
   it("orders questions by first appearance", () => {
     const { questions } = mergeQuestionChunks([
       chunk(1, 3, [q({ label: "2", startPage: 3, endPage: 3 }), q({ label: "1", startPage: 1, endPage: 1 })]),
