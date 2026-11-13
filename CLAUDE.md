@@ -157,21 +157,38 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
   `question-documents`), each declared the
   same twice-over way in `supabase/config.toml` + `lib/storage/config.ts`.
 
-## Syllabus extraction (async worker)
+## Syllabus extraction (background, in-app)
 
 - Uploading a syllabus document writes `syllabuses` with `extraction_status:
-  "pending"` and enqueues a BullMQ job — the Next.js app is a **producer only**,
-  never a consumer. A standalone process at `worker/` (run with `pnpm
-  worker:dev` / `pnpm worker:start`) does the Gemini call and writes
-  `topics`/`concepts`/`topic_concepts`, because Vercel cannot host the
-  persistent process a queue consumer needs.
-- The worker needs its own env: `REDIS_URL`, `DATABASE_URL`, `GEMINI_API_KEY`,
-  plus the Supabase service-role key `lib/storage/objects.ts` already uses.
-  None of these belong in the Vercel/Next env. **`worker/index.ts` does not get
-  `.env.local` for free the way Next does** — `worker/env.ts` (dotenv, same
-  pattern as `drizzle.config.ts`) must be the *first* import in any worker
-  entrypoint, before anything that reads env at module-load time
-  (`lib/db/client.ts` throws immediately if `DATABASE_URL` is missing).
+  "pending"`, then `lib/extraction/start.ts` runs the extraction with
+  `after()` from `next/server` — **inside the same Vercel function, after the
+  response has gone back to the tutor**. It calls Gemini and writes
+  `topics`/`concepts`/`topic_concepts`. There is no queue and no separate
+  process. *Decided 2026-11-13, reversing the original BullMQ + standalone
+  `worker/` design* after the Railway worker went down over billing and left a
+  live upload spinning forever: Fluid Compute lets `after()` work run to the
+  route's `maxDuration`, which is enough because chunks run concurrently. This
+  removed Railway, Upstash, `bullmq` and `ioredis` outright.
+- **`export const maxDuration = 300` on both syllabus pages is load-bearing.**
+  A Server Action runs with its page's segment config, so that is the budget the
+  `after()` work gets. It also needs **Fluid Compute enabled on the Vercel
+  project** — without it Hobby caps functions at 60s. Vercel Pro can raise
+  `maxDuration` to 800 if large documents start timing out.
+- **A killed function leaves nothing behind to write `failed`.** So a row still
+  `pending`/`processing` past `STALE_AFTER_MS` (10 min, `lib/extraction/stale.ts`)
+  is *read* as failed — derived in `lib/db/queries/syllabuses.ts`, never written
+  by a sweeper — and the existing failed UI (pill + Retry) applies.
+  `retryQuestionImport` accepts the same stale case, re-checked in SQL.
+- **Retries are per Gemini call, not per job** (`lib/extraction/retry.ts`, 3
+  attempts, 2s/6s). BullMQ used to re-run a whole failed job; now one flaky
+  chunk retries alone. A missing key or a blocked prompt is not retried.
+- Extraction needs `GEMINI_API_KEY` and the Supabase service-role key in the
+  **Vercel** env now. Both are server-only: `lib/extraction/` must never be
+  imported from a `"use client"` module.
+- `scripts/` runs extraction outside Next, so it does not get `.env.local` for
+  free — `scripts/env.ts` (dotenv) must be the *first* import in any script,
+  before anything that reads env at module-load time (`lib/db/client.ts`
+  throws immediately if `DATABASE_URL` is missing).
 - `syllabuses.extraction_status` (`none | pending | processing | done | failed`)
   is a distinct enum from `attachments.extraction_status` — the latter tracks
   OCR-style text extraction (still unused, still v1's AI hook); this one tracks
@@ -183,24 +200,23 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
   Whole-document extraction was producing topics too vague/generic — with the
   full document in context, the model filled gaps with what a syllabus for
   the subject "usually" covers instead of only what the document said.
-  `worker/pdf-chunk.ts` splits the PDF into fixed-size, page-based windows (3
+  `lib/extraction/pdf-chunk.ts` splits the PDF into fixed-size, page-based windows (3
   pages, 1-page overlap — structural, not an LLM deciding boundaries
   semantically); each chunk gets its own `extractTopicsAndConcepts` call with
   an addendum telling it the chunk is a partial excerpt and it must return an
   empty `topics` array rather than infer beyond that excerpt's literal text.
   Chunks run fully concurrently (`Promise.all` in
-  `worker/process-syllabus-extraction.ts`) — deliberately uncapped since the
-  Gemini key is paid-tier; revisit with a concurrency cap if this ever runs
-  on a free-tier key or starts tripping 429s. `worker/process-syllabus-
-  extraction.ts` then merges the per-chunk results by case-insensitive
+  `lib/extraction/process-syllabus-extraction.ts`) — deliberately uncapped since
+  the Gemini key is paid-tier, and nothing caps concurrent *uploads* any more
+  either (the old worker ran 2 at a time). 429s are retried per chunk; add a
+  cap if they start exhausting the retries. It then merges the per-chunk results by case-insensitive
   topic/concept name (the 1-page overlap means the same topic can
   legitimately reappear in two consecutive chunks). **PDF only** —
   `.txt`/`.doc`/`.docx` still go through the original single whole-document
   call; there is no chunking story for those yet.
 - **Verified working locally end-to-end** (2026-08): a real document uploaded,
   extracted by Gemini, and written as topics/concepts, via
-  `scripts/test-syllabus-pipeline.ts` (below). Not yet deployed anywhere —
-  worker and Redis both run locally only; see `docs/status.md` known gaps.
+  `scripts/test-syllabus-pipeline.ts` (below).
 
 ### Model gotchas — learned by breaking it, do not pick a model by guessing
 
@@ -215,7 +231,7 @@ Everything here was learned by breaking it. Do not "simplify" these rules.
   despite still appearing in `ListModels`. Don't pin a dated version; the
   `-latest` alias family is the only thing confirmed to keep working, and even
   that needs the guards below.
-- **The guards in `worker/gemini-extract.ts` are load-bearing, not
+- **The guards in `lib/extraction/gemini-extract.ts` are load-bearing, not
   boilerplate**: `maxOutputTokens` + a `finishReason !== "STOP"` check exist
   because this model was reproduced going into a degenerate repetition loop —
   one field ballooning to ~49k tokens of repeated filler while still producing
@@ -262,31 +278,31 @@ curl/Postman (Next's internal encoding, not plain REST). Use
 tutor account (`syllabus-pipeline-test@test.local`):
 
 ```
-pnpm test:syllabus-pipeline <file.txt|.pdf|.doc|.docx> ["title"]   # seed + enqueue
+pnpm test:syllabus-pipeline <file.txt|.pdf|.doc|.docx> ["title"]   # seed, extract in-process, print
 pnpm test:syllabus-pipeline --status <syllabusId>                  # check result
 pnpm test:syllabus-pipeline --cleanup                               # wipe test data, keep the account
 ```
 
-Run `pnpm worker:dev` in another terminal to actually process what it enqueues.
+It runs the extraction in-process and prints the result; no dev server needed.
 
-## Question extraction (async worker)
+## Question extraction (background, in-app)
 
-The question bank is built by the same worker, on a second queue
-(`question-extraction`). Design and rationale:
+The question bank is built the same way, started by `startQuestionExtraction`.
+Design and rationale:
 [`docs/superpowers/specs/2026-11-11-question-bank-design.md`](docs/superpowers/specs/2026-11-11-question-bank-design.md).
 
-- **The syllabus is a closed vocabulary, not prose context.** At job start the
-  worker gives each live topic and concept a per-job handle (`T1…`, `C1…`,
-  `worker/question-handles.ts`), lists them in the prompt, and constrains
+- **The syllabus is a closed vocabulary, not prose context.** At job start
+  extraction gives each live topic and concept a per-job handle (`T1…`, `C1…`,
+  `lib/extraction/question-handles.ts`), lists them in the prompt, and constrains
   `topicRef`/`conceptRefs` in the `responseSchema` to `enum`s of those handles
   plus `NONE`. The model can never invent a tag and nothing fuzzy-matches a
   name. A syllabus with no concepts omits `conceptRefs` entirely — Gemini
   rejects an empty enum. A syllabus with no topics is refused at upload and
   fails the job (`NO_TOPICS_MESSAGE`).
-- **The job payload is `{ importId }` only.** Tutor, syllabus and document are
-  re-read from the `question_imports` row; the queue is an authz boundary.
+- **The job is `{ importId }` only.** Tutor, syllabus and document are
+  re-read from the `question_imports` row, never trusted from the caller.
 - **PDF-only**, chunked by the same `pdf-chunk.ts` (3 pages, 1 overlap).
-  `worker/merge-questions.ts` dedupes an overlap duplicate only when the
+  `lib/extraction/merge-questions.ts` dedupes an overlap duplicate only when the
   normalised `(section, label)` matches **and** page ranges intersect — the
   same number far apart is two sections restarting their numbering. Answer-key
   entries are paired after the merge, never inside a model call; inline answers
@@ -300,7 +316,7 @@ The question bank is built by the same worker, on a second queue
   tutorial spent 15727 of 16384 tokens thinking and left 643 for the answer —
   `MAX_TOKENS` on every attempt. A non-STOP finish now puts the
   answer/thinking/prompt token split in the error; read it before raising any
-  limit. *`worker/gemini-extract.ts` (topics, 8192 cap) uses the same model
+  limit. *`lib/extraction/gemini-extract.ts` (topics, 8192 cap) uses the same model
   with thinking uncapped and is exposed to the same failure.*
 - **Section headings carry forward across chunks.** A chunk that starts past
   a heading never sees it; without carry-forward the overlap copy of a
@@ -311,19 +327,12 @@ The question bank is built by the same worker, on a second queue
   slice 2, figure-crop confirmation (`pdfjs-dist`) slice 3.
 
 ```
-pnpm test:question-pipeline <file.pdf> --syllabus <syllabusId>   # upload + enqueue as that syllabus's tutor
+pnpm test:question-pipeline <file.pdf> --syllabus <syllabusId>   # upload + extract as that syllabus's tutor
 pnpm test:question-pipeline --status <importId>                  # print the extracted drafts
 pnpm test:question-pipeline --cleanup <importId>                 # hard-delete ONE import and its questions (local DB only)
 ```
 
-### Local Redis
-
-`pnpm redis:start` / `pnpm redis:stop` run a `dolphn-redis` Docker container
-(no persistence — queue jobs are transient, `removeOnComplete: true`).
-**Mapped to host port 6380, not the default 6379** — port 6379 was already
-taken by an unrelated project's container on the dev machine this was set up
-on; check for a conflict before assuming 6379 is free elsewhere. `.env.local`'s
-`REDIS_URL` must match whichever port is actually used.
+### Local buckets
 
 **Adding a new private bucket needs `pnpm exec supabase seed buckets --local`
 (or a real `supabase stop && supabase start`), not just an edit to
@@ -376,12 +385,12 @@ whether to merge them. Nothing here runs automatically.
   merge forever. Name-to-id resolution checks a tombstone match after the live
   match and follows `merged_into_id` instead of recreating the row. It lives in
   **`lib/db/concept-resolution.ts` and has exactly one implementation on
-  purpose**: both writers of `concepts` — the extraction worker and
+  purpose**: both writers of `concepts` — syllabus extraction and
   `createSyllabusFromPreset`'s deep copy — call `createConceptResolver(tx,
   tutorId)`. The preset path used to carry its own case-sensitive copy that
   followed no tombstone, which quietly recreated merged-away names; `lib/` is
-  the shared home because `worker/` may import from it and must never import
-  from `app/`. Merging
+  the shared home because `lib/extraction/` may import from it and must never
+  import from `app/`. Merging
   also repoints any tombstone that already pointed at a loser to the new
   survivor, so a chain is exactly one hop and resolution needs no loop guard —
   **but that holds because `mergeConcepts` serialises merges, not by
@@ -441,31 +450,23 @@ Settled and in production. No new dependencies without asking.
 
 Boring and well-trodden is the point.
 
-**Worker-only additions** (2026-08 for syllabus extraction, reused 2026-11 for
+**Extraction-only additions** (2026-08 for syllabus extraction, reused 2026-11 for
 question extraction; greenlit alongside the LLM carve-outs above — not part of the "boring and well-trodden" v1 stack, and not a
 precedent for adding AI tooling elsewhere without asking again):
 
-- `@google/generative-ai` (Gemini) — only ever imported from `worker/`, never
-  from `app/` or `lib/` the Next.js app touches
-- BullMQ + Redis (`ioredis`) — job queue between the Next app (producer) and
-  the worker (consumer)
+- `@google/generative-ai` (Gemini) — only ever imported from `lib/extraction/`,
+  which only Server Actions reach (through `start.ts`). Never from a client
+  component.
 - **Approved 2026-11-11, not yet installed:** `katex` (render LaTeX in the
   question review UI, slice 2) and `pdfjs-dist` (client-side page rendering for
   figure-crop confirmation, slice 3).
-- `pdf-lib` — only ever imported from `worker/pdf-chunk.ts`, used to slice an
+- `pdf-lib` — only ever imported from `lib/extraction/pdf-chunk.ts`, used to slice an
   uploaded PDF into page-range sub-documents for structural chunking (see
   Syllabus extraction above)
-- The `worker/` process runs on **Railway**; Redis is **Upstash** (`rediss://`,
-  TLS — the Vercel→Redis leg crosses the public internet, and queue-write is an
-  authorization boundary because the worker trusts the ids in a job payload).
-  See [`docs/deploy.md`](docs/deploy.md) §9. Two things that look like bugs if
-  you don't know them: `tsx` is in `dependencies`, not `devDependencies`,
-  because `worker:start` *is* `tsx worker/index.ts` and production installs
-  skip devDeps; and **the producer and worker connections are deliberately not
-  symmetric** — `maxRetriesPerRequest: null` is required for the worker's
-  blocking connection but caused a hung upload modal on the producer (ioredis
-  retries forever, so `queue.add()` never settles). The producer fails fast
-  instead; do not "tidy" the two back into agreement.
+- *Removed 2026-11-13:* BullMQ, `ioredis`, the Railway worker and Upstash
+  Redis. Extraction runs in-app (see Syllabus extraction above). Don't
+  reintroduce a queue for scale you don't have; if you ever need one, a jobs
+  table in Postgres is the next step, not another hosted service.
 
 ## Commands
 
@@ -481,11 +482,7 @@ pnpm db:migrate     # apply migrations
 pnpm db:studio
 pnpm sb:start       # local Supabase stack
 pnpm sb:stop
-pnpm redis:start    # local Redis (Docker), for the syllabus-extraction queue
-pnpm redis:stop
-pnpm worker:dev     # syllabus- and question-extraction worker, watch mode (needs REDIS_URL, GEMINI_API_KEY)
-pnpm worker:start   # same, no watch — what production runs
-pnpm test:syllabus-pipeline   # seed/status/cleanup a real extraction test, no UI needed
+pnpm test:syllabus-pipeline   # seed + extract + print a real extraction, no UI needed
 pnpm test:question-pipeline   # same for question extraction (needs an existing syllabus with topics)
 ```
 
@@ -520,10 +517,9 @@ lib/
     queries/            # all reads — each authorizes before returning rows
     migrations/         # drizzle-owned; there is no supabase/migrations
   storage/              # private buckets (materials, syllabus-documents, question-documents), opaque keys, signed URLs
-  queue/                # BullMQ producer side — enqueues jobs, never processes one
+  extraction/           # syllabus + question extraction: Gemini calls, chunking, start (after()), retry, stale
   syllabus-presets/      # static preset fixtures, not DB rows
   validation/           # zod schemas
-worker/                 # standalone process: consumes the syllabus- and question-extraction queues, calls Gemini
 components/             # shell (top-bar, page, auth-card), forms, date rendering
   ui/                   # shadcn primitives + the app's own (panel/row, pill, ext-chip, form-dialog)
 tests/                  # authz tests, negatives included
@@ -558,7 +554,7 @@ design doc referenced at the top of this file.
 
 ## Testing
 
-- Every authorization rule gets a test, and the suite must include **negative** cases: student A cannot read student B's submission; tutor A cannot read tutor B's class; a student cannot issue an assignment. 224 tests today, mostly authorization; the rest are pure unit tests (concept normalisation/clustering, worker extraction, question handles/merge, identity headers).
+- Every authorization rule gets a test, and the suite must include **negative** cases: student A cannot read student B's submission; tutor A cannot read tutor B's class; a student cannot issue an assignment. 232 tests today, mostly authorization; the rest are pure unit tests (concept normalisation/clustering, extraction merge/retry/staleness, question handles/merge, identity headers).
 - One Playwright happy path end to end: tutor creates class → invites student → creates session → uploads material → issues assignment; student accepts invite → downloads material → submits → tutor sees the submission. **Not built yet** — `pnpm test:e2e` has no config or specs behind it. Coverage today is unit-level authz plus manual verification.
 
 ## Working agreement
