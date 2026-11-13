@@ -30,7 +30,7 @@ Last updated: Question bank slice 1 (extraction to drafts) — 2026-11-11.
 | CP6 | Assignments and submissions | **Not started** |
 | CP7+ | Everything else in [`future-enhancements.md`](future-enhancements.md) | Not started |
 
-**218 tests, all passing.** The suite is still weighted toward authorization
+**224 tests, all passing.** The suite is still weighted toward authorization
 (including negative cases), with unit coverage added for the pure helpers
 underneath the syllabus-extraction merge/degeneracy logic, concept
 normalisation/clustering, and question handles/merge/answer pairing.
