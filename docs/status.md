@@ -4,8 +4,7 @@
 with no code behind them yet — that is deliberate (see the forward-compat hooks
 in [`../CLAUDE.md`](../CLAUDE.md)), not an oversight.
 
-Last updated: Concept deduplication (normalised-key clustering, cluster review,
-merge/reject) — 2026-08-07–17.
+Last updated: Question bank slice 1 (extraction to drafts) — 2026-11-11.
 
 ---
 
@@ -26,13 +25,15 @@ merge/reject) — 2026-08-07–17.
 | — | Syllabus creation — backend (schema, upload, presets, async extraction) | Done |
 | — | Syllabus creation — UI (Syllabi tab, editor) | Done |
 | — | Concept deduplication (clustering, cluster review, merge/reject) | Done |
+| — | Question bank — slice 1: extraction to drafts (no UI) | Done |
+| — | Question bank — slices 2–3: review UI, figure-crop confirmation | Not started |
 | CP6 | Assignments and submissions | **Not started** |
 | CP7+ | Everything else in [`future-enhancements.md`](future-enhancements.md) | Not started |
 
-**136 tests, all passing.** The suite is still weighted toward authorization
+**224 tests, all passing.** The suite is still weighted toward authorization
 (including negative cases), with unit coverage added for the pure helpers
-underneath the syllabus-extraction merge/degeneracy logic and concept
-normalisation/clustering.
+underneath the syllabus-extraction merge/degeneracy logic, concept
+normalisation/clustering, and question handles/merge/answer pairing.
 
 *Correction, made while doing the concept-dedup pass below:* the "Syllabus
 creation — UI" row above was marked **Not started**, which was already wrong —
@@ -327,6 +328,43 @@ tutors.)
 Minor: topic/concept inserts are sequential N+1 awaits inside the transaction
 (batchable).
 
+## Question bank — slice 1 (extraction to drafts)
+
+Spec: [`superpowers/specs/2026-11-11-question-bank-design.md`](superpowers/specs/2026-11-11-question-bank-design.md).
+A tutor-uploaded PDF becomes **draft** questions on a syllabus, tagged with
+one topic and some concepts from that syllabus's own closed vocabulary.
+
+**Exists:**
+- Migration `0004` — `question_imports`, `questions`, `question_parts`,
+  `question_concepts`, `question_figures` (+ 2 enums). Private
+  `question-documents` bucket.
+- `app/(tutor)/syllabi/[syllabusId]/questions/actions.ts` —
+  `requestQuestionImportUpload` / `confirmQuestionImportUpload` /
+  `retryQuestionImport`. Owner-only; upload refused for a syllabus with no
+  topics; confirm re-stats the object; enqueue failure lands on the import.
+- `lib/queue/question-extraction.ts` (producer, `{ importId }` only) on the
+  shared fail-fast `lib/queue/connection.ts`.
+- `worker/question-handles.ts`, `question-schema.ts`, `merge-questions.ts`,
+  `gemini-extract-questions.ts`, `process-question-extraction.ts`; a second
+  `Worker` in `worker/index.ts`.
+- `mergeConcepts` repoints `question_concepts`.
+- `scripts/test-question-pipeline.ts` (`pnpm test:question-pipeline`).
+
+**Does not exist yet:** any UI (no route renders questions or imports), the
+approve action and its invariant (topic set, every figure cropped), figure-crop
+confirmation, hand-written questions, reads in `lib/db/queries/`. Questions
+reach no student by any path.
+
+**Real-document validation (2026-11-11):** RI H2 Math Tutorial 7B, 5 pages,
+2 chunks — 12/12 questions, all 23 printed answers paired, marks and nested
+parts correct, the one figure boxed in the right place, every question tagged
+to the right topic. Found and fixed on the way: hidden thinking exhausting
+`maxOutputTokens` (now capped), and a duplicate question from a section
+heading the second chunk never saw (now carried forward). Still imperfect: an
+unlabelled trailing sub-part ("Given that…, find n [2]") was folded into the
+part before it. One worksheet-style document with an answer key at the back
+has not been tried yet.
+
 ## Concept deduplication
 
 A tutor's concepts accumulate across every syllabus they upload and the same
@@ -473,3 +511,10 @@ Ordered by how much they matter.
     deduplication" above) are only checked by reading the code, not by a
     test. This is the same gap the design doc's Testing section called out
     and it was not closed by this work.
+12. **Question extraction: one real paper validated, gaps remain.** See the
+    slice-1 section above. Open: (a) a job killed mid-run (worker restart past
+    BullMQ's stalled limit) leaves its import stuck at `processing`, and
+    `retryQuestionImport` only reopens `failed`; (b) the Gemini call has no
+    request timeout, so a stalled connection hangs an attempt; (c) the topic
+    extractor has the same uncapped-thinking exposure. Cloud: migration `0004`
+    and the `question-documents` bucket are not applied/created there yet.

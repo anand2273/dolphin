@@ -57,27 +57,29 @@ by hand would need a backfill first.
 
 ## 3. Create the storage buckets
 
-There are **two**, both private, both declared in `supabase/config.toml` — so
-neither needs to be hand-built:
+There are **three**, all private, all declared in `supabase/config.toml` — so
+none needs to be hand-built:
 
 | Bucket | Holds | Declared at | MIME list |
 |---|---|---|---|
 | `materials` | session materials and submissions | `config.toml:125` | `lib/storage/config.ts:26` |
 | `syllabus-documents` | uploaded syllabus source documents | `config.toml:147` | `lib/storage/config.ts:59` |
+| `question-documents` | question-import PDFs and (slice 3) figure-crop PNGs | `config.toml:159` | `lib/storage/config.ts:86` (imports; crops add PNG in slice 3) |
 
 ```bash
 npx supabase seed buckets --linked
 ```
 
 That creates every bucket in `config.toml`, and is safe to re-run. Confirm in
-the dashboard → Storage that **both** exist, **neither** is public, and both
-show a 25 MiB limit. If either reports public, stop and fix it — every download
+the dashboard → Storage that **all three** exist, **none** is public, and each
+shows a 25 MiB limit. If any reports public, stop and fix it — every download
 in the app assumes the bucket is private and that signed URLs are the only way
 in.
 
-`syllabus-documents` is the newer of the two and is easy to miss if you ran
-this step before it existed: nothing warns you, and the symptom is `Bucket not
-found` on the first syllabus upload. Re-run the command rather than assuming a
+`syllabus-documents` and `question-documents` are newer than `materials` and
+easy to miss if you ran this step before they existed: nothing warns you, and
+the symptom is `Bucket not found` on the first upload into the missing one
+(`question-documents` allows only `application/pdf` and `image/png`). Re-run the command rather than assuming a
 project set up earlier has it.
 
 Fallback, if the CLI misbehaves — dashboard → Storage → New bucket, once per
@@ -296,9 +298,11 @@ The same value goes on both hosts — Vercel (step 7) and the worker (9c).
   Every BullMQ operation is a round trip.
 
 Upstash bills per command, and an idle BullMQ worker issues blocking poll
-commands continuously — roughly 3k/day per worker against the free tier's
-10k/day. Fine at one worker; check the usage graph after a few days rather
-than assuming idle means free.
+commands continuously — roughly 3k/day per BullMQ `Worker` against the free
+tier's 10k/day. The worker process now runs **two** (syllabus extraction and
+question extraction), so expect ~6k/day idle — still inside the free tier but
+with much less headroom. Check the usage graph after a few days rather than
+assuming idle means free.
 
 **Do not add `family: 0` to either connection.** It exists to make Node accept
 an AAAA answer, which is only needed on an IPv6-only private network such as
@@ -364,9 +368,10 @@ Deploy the worker first and watch its log for:
 
 ```
 [syllabus-extraction] worker started, waiting for jobs
+[question-extraction] worker started, waiting for jobs
 ```
 
-That line proves the worker's `REDIS_URL`, TLS and Upstash auth are all good.
+Both lines must appear (one per queue). Together they prove the worker's `REDIS_URL`, TLS and Upstash auth are all good.
 Then put the **same** `REDIS_URL` into Vercel (step 7), redeploy, and upload a
 syllabus document at `/syllabi`.
 

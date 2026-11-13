@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import IORedis from "ioredis";
+import { getProducerConnection } from "./connection";
 
 /**
  * Producer side of the async extraction pipeline (used by the Next.js app).
@@ -17,34 +17,14 @@ export type SyllabusExtractionJob = {
   attachmentId: string;
 };
 
-let connection: IORedis | null = null;
 let queue: Queue<SyllabusExtractionJob> | null = null;
 
 function getQueue(): Queue<SyllabusExtractionJob> {
   if (queue) return queue;
-
-  const redisUrl = process.env.REDIS_URL;
-  if (!redisUrl) {
-    throw new Error(
-      "REDIS_URL is not set — required to enqueue syllabus extraction jobs.",
-    );
-  }
-  // These options are deliberately NOT the worker's. `maxRetriesPerRequest:
-  // null` is required for BullMQ's *blocking* connections only (bullmq's
-  // RedisConnection enforces it under `extraOptions.blocking`) — a Queue
-  // producer is non-blocking. Setting null here was a real outage: with an
-  // unreachable Redis, ioredis parks the command and reconnects forever, so
-  // `queue.add()` never resolves or rejects, `confirmSyllabusDocumentUpload`
-  // never returns, and the user watches an upload spinner until Vercel's
-  // function timeout. Fail fast instead, so a bad REDIS_URL surfaces as an
-  // error the action can return. See deploy.md §9d.
-  connection = new IORedis(redisUrl, {
-    maxRetriesPerRequest: 3,
-    enableOfflineQueue: false,
-    connectTimeout: 5_000,
-  });
+  // Fail-fast producer options live in ./connection.ts; see the comment there
+  // for why they must not match the worker's.
   queue = new Queue<SyllabusExtractionJob>(SYLLABUS_EXTRACTION_QUEUE, {
-    connection,
+    connection: getProducerConnection(),
   });
   return queue;
 }

@@ -75,6 +75,26 @@ export function isAllowedSyllabusDocumentMimeType(
 export const SYLLABUS_DOCUMENT_ACCEPT_ATTRIBUTE =
   SYLLABUS_DOCUMENT_MIME_TYPES.join(",");
 
+/**
+ * Private bucket for the question bank: uploaded source PDFs, and (slice 3)
+ * tutor-confirmed figure crops. Declared again on the bucket itself in
+ * supabase/config.toml; change both.
+ */
+export const QUESTION_DOCUMENTS_BUCKET = "question-documents";
+
+/** Imports are PDF-only: figure confirmation needs real pages to render. */
+export const QUESTION_IMPORT_MIME_TYPES = ["application/pdf"] as const;
+
+export type QuestionImportMimeType = (typeof QUESTION_IMPORT_MIME_TYPES)[number];
+
+export function isAllowedQuestionImportMimeType(
+  value: string,
+): value is QuestionImportMimeType {
+  return (QUESTION_IMPORT_MIME_TYPES as readonly string[]).includes(value);
+}
+
+export const QUESTION_IMPORT_ACCEPT_ATTRIBUTE = QUESTION_IMPORT_MIME_TYPES.join(",");
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;

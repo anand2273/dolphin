@@ -1,7 +1,15 @@
 import { createClient } from "@supabase/supabase-js";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { classes, profiles, syllabuses } from "@/lib/db/schema";
+import {
+  attachments,
+  classes,
+  profiles,
+  questionImports,
+  syllabuses,
+} from "@/lib/db/schema";
+import { generateObjectKey } from "@/lib/storage/objects";
+import { QUESTION_DOCUMENTS_BUCKET } from "@/lib/storage/config";
 
 /**
  * Admin Supabase client (service-role) — TEST ONLY. Used to create real
@@ -72,4 +80,35 @@ export async function deleteTestUser(user: TestUser) {
   await db.delete(syllabuses).where(eq(syllabuses.tutorId, user.id));
   await db.delete(profiles).where(eq(profiles.id, user.id));
   await admin.auth.admin.deleteUser(user.id);
+}
+
+/** Insert an attachment + question import for a tutor's syllabus. No storage object is created. */
+export async function insertImport(
+  tutorId: string,
+  syllabusId: string,
+  status: "pending" | "processing" | "done" | "failed" = "pending",
+): Promise<{ importId: string; attachmentId: string }> {
+  const [attachment] = await db
+    .insert(attachments)
+    .values({
+      bucket: QUESTION_DOCUMENTS_BUCKET,
+      objectKey: generateObjectKey(),
+      originalFilename: "paper.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1000,
+      uploadedByUserId: tutorId,
+    })
+    .returning({ id: attachments.id });
+  const [row] = await db
+    .insert(questionImports)
+    .values({ syllabusId, tutorId, sourceAttachmentId: attachment.id, status })
+    .returning({ id: questionImports.id });
+  return { importId: row.id, attachmentId: attachment.id };
+}
+
+/** Syllabus first (cascades imports/questions), then attachments (restrict on profiles), then the user. */
+export async function teardownTutor(user: TestUser) {
+  await db.delete(syllabuses).where(eq(syllabuses.tutorId, user.id));
+  await db.delete(attachments).where(eq(attachments.uploadedByUserId, user.id));
+  await deleteTestUser(user);
 }

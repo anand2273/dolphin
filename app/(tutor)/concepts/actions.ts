@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { and, asc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { conceptMergeRejections, concepts, topicConcepts } from "@/lib/db/schema";
+import {
+  conceptMergeRejections,
+  concepts,
+  questionConcepts,
+  topicConcepts,
+} from "@/lib/db/schema";
 import { requireAuthUser } from "@/lib/auth/session";
 import { assertConceptsOwned, AuthzError } from "@/lib/auth/authz";
 import { recordEvent } from "@/lib/db/events";
@@ -96,6 +101,21 @@ export async function mergeConcepts(
             .onConflictDoNothing();
         }
         await tx.delete(topicConcepts).where(eq(topicConcepts.conceptId, loserId));
+
+        // Same repoint for question tags: without it a merge silently untags
+        // every question the loser was on (the loser is tombstoned, so its
+        // rows would point at a dead concept forever).
+        const questionLinks = await tx
+          .select({ questionId: questionConcepts.questionId })
+          .from(questionConcepts)
+          .where(eq(questionConcepts.conceptId, loserId));
+        for (const link of questionLinks) {
+          await tx
+            .insert(questionConcepts)
+            .values({ questionId: link.questionId, conceptId: survivorId })
+            .onConflictDoNothing();
+        }
+        await tx.delete(questionConcepts).where(eq(questionConcepts.conceptId, loserId));
 
         // Tombstone. Soft-deleting drops the row out of
         // concepts_tutor_name_live_uidx, which is partial on deleted_at is null,
