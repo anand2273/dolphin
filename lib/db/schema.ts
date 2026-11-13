@@ -97,7 +97,7 @@ export const feedbackAuthorType = pgEnum("feedback_author_type", [
 ]);
 
 /**
- * Tracks the async worker's progress mining topics/concepts out of an uploaded
+ * Tracks background extraction's progress mining topics/concepts out of an uploaded
  * syllabus document. Distinct from `extractionStatus` above — that one tracks
  * OCR-style text extraction on an attachment; this one tracks a structured
  * topic/concept extraction pipeline that writes rows, not just text. `none` is
@@ -113,7 +113,7 @@ export const syllabusExtractionStatus = pgEnum("syllabus_extraction_status", [
 ]);
 
 /**
- * Progress of one uploaded question document through the async worker. Lives
+ * Progress of one uploaded question document through background extraction. Lives
  * on `question_imports`, not on `syllabuses`: a syllabus collects many papers,
  * each with its own outcome.
  */

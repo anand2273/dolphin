@@ -5,8 +5,8 @@ import {
   isDegenerate,
   truncate,
   type SyllabusExtractionResult,
-} from "@/worker/gemini-extract";
-import { mergeExtractionResults } from "@/worker/process-syllabus-extraction";
+} from "@/lib/extraction/gemini-extract";
+import { mergeExtractionResults } from "@/lib/extraction/process-syllabus-extraction";
 
 /**
  * The worker's pure functions. These run on every real extraction but never

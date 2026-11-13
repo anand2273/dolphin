@@ -15,7 +15,7 @@ import {
   updateSyllabusSchema,
   updateTopicSchema,
 } from "@/lib/validation/syllabus";
-import { enqueueSyllabusExtraction } from "@/lib/queue/syllabus-extraction";
+import { startSyllabusExtraction } from "@/lib/extraction/start";
 import { deleteSyllabus } from "@/app/(tutor)/syllabi/actions";
 import type { FormState } from "@/lib/types";
 
@@ -106,25 +106,7 @@ export async function retrySyllabusExtraction(syllabusId: string): Promise<void>
     .set({ extractionStatus: "pending", extractionError: null, updatedAt: new Date() })
     .where(eq(syllabuses.id, syllabusId));
 
-  // Same reasoning as confirmSyllabusDocumentUpload: a queue outage must land
-  // back on the row as a readable error, not throw out of the action.
-  try {
-    await enqueueSyllabusExtraction({
-      syllabusId,
-      attachmentId: syllabus.sourceAttachmentId,
-    });
-  } catch (e) {
-    await db
-      .update(syllabuses)
-      .set({
-        extractionStatus: "failed",
-        extractionError: `Could not queue extraction: ${
-          e instanceof Error ? e.message : "unknown error"
-        }`,
-        updatedAt: new Date(),
-      })
-      .where(eq(syllabuses.id, syllabusId));
-  }
+  startSyllabusExtraction({ syllabusId, attachmentId: syllabus.sourceAttachmentId });
 
   revalidatePath(`/syllabi/${syllabusId}`);
 }

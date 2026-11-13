@@ -4,9 +4,8 @@ Target: existing Supabase cloud project + existing Vercel project, running on th
 `*.vercel.app` URL, with Resend for transactional email.
 
 Work top to bottom. Steps 4 and 5 are the ones that silently half-work if skipped
-— the app will look fine and invitations will quietly break. Step 9 (Redis and
-the extraction worker) is additive and optional: steps 1–8 give you a fully
-working app without it.
+— the app will look fine and invitations will quietly break. Step 9 (turning on
+AI extraction) is additive: steps 1–8 give you a fully working app without it.
 
 Throughout, `PROJECT_REF` is your Supabase project ref (the subdomain in
 `https://<ref>.supabase.co`) and `APP_URL` is your production URL —
@@ -204,20 +203,12 @@ Project → Settings → Environment Variables. Set for Production **and** Previ
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | anon key | public |
 | `SUPABASE_SERVICE_ROLE_KEY` | service role key | **secret — never `NEXT_PUBLIC_`** |
 | `DATABASE_URL` | pooled URI, see below | secret |
-| `REDIS_URL` | Upstash `rediss://…` TCP URI | secret; only needed once step 9 is done |
+| `GEMINI_API_KEY` | paid-tier Gemini key | **secret**; only needed for step 9 |
 
-`REDIS_URL` is required here because the Next app is the **producer** side of the
-extraction queue (`lib/queue/syllabus-extraction.ts`). Without it, uploading a
-syllabus document throws "REDIS_URL is not set" at enqueue time even if the
-worker itself is running perfectly.
-
-It is the **same value** the worker gets (9c). Two ways to get it subtly wrong,
-both of which used to hang the upload modal rather than error: pasting the REST
-URL (`https://…`) instead of the TCP one, or dropping the second `s` from
-`rediss://` and losing TLS. See 9a.
-
-`GEMINI_API_KEY` deliberately does **not** belong here. Only the worker calls
-Gemini; putting the key in Vercel's env widens its blast radius for nothing.
+`GEMINI_API_KEY` lives here because extraction runs inside the Next app (see
+step 9). Without it, an upload is saved and its extraction fails with
+"GEMINI_API_KEY is not set" on the syllabus page — nothing is lost; set the
+key, redeploy, and hit Retry.
 
 `DATABASE_URL` must be the **transaction pooler** (port 6543), not the direct
 connection — serverless functions open far too many connections otherwise:
@@ -256,182 +247,58 @@ failed at least once during development:
 - [ ] Signed out, `APP_URL/api/materials/<id>/download` returns 401
 - [ ] Signed in as a *different* tutor, the same URL returns 404
 
-## 9. Redis and the syllabus-extraction worker
+## 9. AI extraction (syllabus topics and question import)
 
-Additive: steps 1–8 give you a fully working app. This stage only turns on
-syllabus extraction. Everything else keeps working if you skip it — but a
-tutor who uploads a syllabus document will see it sit at `pending` forever,
-so don't ship the Syllabi UI without it.
+Additive: steps 1–8 give you a fully working app. This step turns on reading
+uploaded syllabus and question PDFs with Gemini.
 
-Two new hosts, because Vercel cannot run a persistent queue consumer:
-**Upstash** for Redis, and **Railway** for the `worker/` process.
+**There is no separate worker or Redis any more** (*changed 2026-11-13*).
+Extraction runs inside the same Vercel function that handled the upload, via
+`after()` (`lib/extraction/start.ts`), after the response has gone back. The
+old Railway worker and Upstash Redis can be deleted outright.
 
-Redis is on Upstash rather than alongside the worker because the Vercel→Redis
-leg crosses the public internet — the Next app is the queue's *producer*. A
-self-hosted Redis exposed over a plain TCP proxy sends `AUTH <password>` in
-cleartext on that leg, and queue-write is an authorization boundary here: the
-worker trusts the ids in a job payload. Upstash's `rediss://` is TLS end to
-end, which is worth more than the per-command billing it costs.
+### 9a. Turn on Fluid Compute
 
-### 9a. Upstash Redis
+Vercel → Project → Settings → Functions → **Fluid Compute: on**. New projects
+have it on by default since April 2025; older ones may not. Without it, Hobby
+functions are cut off at **60 seconds**, which is shorter than many
+extractions, and they will show as failed after 10 minutes. With it, the
+syllabus pages' `maxDuration = 300` applies (5 minutes).
 
-Create the database, then take the **TCP/Redis-protocol** URI:
+### 9b. Environment
 
-```
-rediss://default:PASSWORD@HOST.upstash.io:6379
-```
+Add `GEMINI_API_KEY` to Vercel (step 7), then redeploy. Remove `REDIS_URL` if
+it is still there — nothing reads it.
 
-The same value goes on both hosts — Vercel (step 7) and the worker (9c).
+### 9c. Verify
 
-- **Not** the REST URL (`UPSTASH_REDIS_REST_URL`, an `https://…` address).
-  BullMQ speaks the real Redis protocol through ioredis and cannot use the
-  REST endpoint at all.
-- **The double-s in `rediss://` is TLS and Upstash requires it.** ioredis
-  infers TLS from the scheme, so a URL hand-edited down to `redis://` fails
-  the handshake — and, before the fix described in 9d, failed it *silently
-  and forever*.
-- **Disable eviction on the database.** BullMQ requires a `noeviction` policy.
-  If Upstash may evict keys under memory pressure, queued jobs vanish with no
-  error anywhere and the syllabus stays `pending` forever. This is the nastiest
-  failure in the whole step precisely because it looks like nothing happened.
-- **Put it in the same region** as the worker host and the Supabase project.
-  Every BullMQ operation is a round trip.
+Upload a small syllabus PDF on `/syllabi`.
 
-Upstash bills per command, and an idle BullMQ worker issues blocking poll
-commands continuously — roughly 3k/day per BullMQ `Worker` against the free
-tier's 10k/day. The worker process now runs **two** (syllabus extraction and
-question extraction), so expect ~6k/day idle — still inside the free tier but
-with much less headroom. Check the usage graph after a few days rather than
-assuming idle means free.
+- [ ] The pill shows **Extracting…** and, within a minute or two, topics appear
+- [ ] Vercel → Logs shows `[syllabus-extraction] done — syllabus <id>`
 
-**Do not add `family: 0` to either connection.** It exists to make Node accept
-an AAAA answer, which is only needed on an IPv6-only private network such as
-Railway's. Against a public host like Upstash it does nothing useful and can
-stall a connect from a runtime without working IPv6 egress.
+### 9d. When it goes wrong
 
-### 9b. The worker service
+Every outcome lands on the row, and the syllabus page shows the reason with a
+Retry button. Vercel → Logs → filter on `extraction` for the full error.
 
-Railway → **New Project** → **Deploy from GitHub repo** → this repo.
-
-| Setting | Value |
-|---|---|
-| Build command | `pnpm install` |
-| Start command | `pnpm worker:start` |
-| Watch paths | `worker/**`, `lib/**`, `package.json` |
-
-Railway has no separate "background worker" service type — it just runs the
-start command and never health-checks for an open port, which is exactly what
-`worker/index.ts` needs. (On Render this is the difference between a
-**Background Worker** and a **Web Service**: pick a Web Service there and the
-port health check restart-loops it forever.)
-
-Set the **watch paths**. Without them every push to the repo — including a
-pure Next.js/UI change — redeploys the worker and interrupts any extraction
-in flight. The worker has no graceful shutdown handler yet (see `status.md`),
-so an interrupted job relies on BullMQ's stalled-job recovery.
-
-**`tsx` now lives in `dependencies`, not `devDependencies`** — deliberately.
-`worker:start` *is* `tsx worker/index.ts`, so on a host that sets
-`NODE_ENV=production` (Railway and Render both do) pnpm skips devDependencies
-and the service dies with `tsx: not found`. It genuinely is a runtime
-dependency for this process. If you ever move it back, the workaround is
-`NPM_CONFIG_PRODUCTION=false` in the env or a build command of
-`pnpm install --prod=false`.
-
-### 9c. Worker environment variables
-
-On the worker service → **Variables**:
-
-| Name | Value | Notes |
-|---|---|---|
-| `REDIS_URL` | Upstash `rediss://…` | the same value Vercel gets |
-| `DATABASE_URL` | **session pooler (5432)** | see below — *not* Vercel's value |
-| `GEMINI_API_KEY` | paid-tier Gemini key | worker only; never on Vercel |
-| `SUPABASE_SERVICE_ROLE_KEY` | service role key | mints the signed download URL |
-| `NEXT_PUBLIC_SUPABASE_URL` | `https://PROJECT_REF.supabase.co` | yes, really — see below |
-
-Two of those are counter-intuitive:
-
-- `NEXT_PUBLIC_SUPABASE_URL` looks Next-only, but `lib/auth/supabase-admin.ts`
-  reads it and the worker reaches that code through `createSignedDownloadUrl`
-  when it fetches the uploaded document. It has to be set on a host that has
-  nothing to do with Next.
-- `DATABASE_URL` must **not** be the transaction pooler (6543) that step 7
-  specifies for Vercel. That advice exists because serverless functions open
-  many short-lived connections. The worker is the opposite: one long-lived
-  process at `concurrency: 2` running multi-statement transactions. Use the
-  session pooler or the direct connection on **5432**.
-
-### 9d. Verify
-
-Deploy the worker first and watch its log for:
-
-```
-[syllabus-extraction] worker started, waiting for jobs
-[question-extraction] worker started, waiting for jobs
-```
-
-Both lines must appear (one per queue). Together they prove the worker's `REDIS_URL`, TLS and Upstash auth are all good.
-Then put the **same** `REDIS_URL` into Vercel (step 7), redeploy, and upload a
-syllabus document at `/syllabi`.
-
-- [ ] The upload modal closes and the syllabus appears
-- [ ] The status pill moves `pending` → `processing` → `done`
-- [ ] Topics and concepts appear on the syllabus page
-- [ ] The worker log shows `done — syllabus <id>`
-
-Reading a failure — work down the pipeline, because each symptom isolates a
-different leg:
-
-- **The syllabus appears with a `failed` pill reading "Could not queue
-  extraction: …".** The bytes reached the bucket and the row committed; only
-  the enqueue failed, so nothing is lost — fix `REDIS_URL` and hit retry. The
-  message after the colon is the real ioredis error and names the cause.
-  Almost always Vercel's `REDIS_URL`: `redis://` instead of `rediss://`, the
-  REST URL pasted instead of the TCP one, or the variable added without
-  redeploying (Vercel applies env changes to *new* deployments only).
-
-  > **This used to present as an upload modal that spun forever with no
-  > message**, which is worth understanding because it hid two separate bugs.
-  > The producer originally shared the worker's `maxRetriesPerRequest: null`,
-  > which tells ioredis never to give up on a command — so an unreachable Redis
-  > meant `queue.add()` never resolved *or* rejected. Fixing that with
-  > `enableOfflineQueue: false` only converted the hang into a rejection, and
-  > the action was throwing out of an unguarded `await` while the form awaited
-  > it without a `catch` — so the dialog still hung, now on a rejected promise.
-  > Both ends are fixed: the actions record the failure on the row and return
-  > normally, and the form catches rejections. `maxRetriesPerRequest: null` is
-  > required for the *worker's* blocking connection only.
-- **Nothing at all in Redis** (`LLEN bull:syllabus-extraction:wait` is 0, or
-  Upstash's usage graph is flat) — confirms the producer, not the worker. Same
-  cause as above.
-- **A job is waiting in Redis but the pill stays `pending`** — the opposite
-  leg: the producer worked and the *worker* is not consuming. Check it is
-  running, and that both hosts point at the same Upstash database.
-- **Stuck on `pending` with an empty queue and a healthy worker** — eviction
-  is enabled and dropped the job (9a).
-- **`processing` → `failed`** — the worker got it and something inside blew
-  up. The UI deliberately shows only a friendly message, so read the real
-  error from `syllabuses.extraction_error` in the database.
+- **"GEMINI_API_KEY is not set"** — step 9b. Not retried automatically.
+- **"Gemini did not finish cleanly (MAX_TOKENS …)"** — read the token split in
+  the message before raising any limit (CLAUDE.md, Question extraction).
+- **"Extraction stopped before finishing (it may have timed out)"** — the row
+  sat in flight for 10+ minutes, which means the function was killed: a timeout
+  (check 9a), or a redeploy mid-run. Retry. If a particular document always
+  does this, it is too large for 300s; Vercel Pro allows `maxDuration` up to 800.
+- **429 / "Too Many Requests"** — each Gemini call is retried 3 times with
+  backoff (`lib/extraction/retry.ts`). Seeing it as a final error means many
+  large uploads at once; add a concurrency cap on chunks.
 
 ### 9e. Know before you ship
 
-The two findings that previously blocked this — a retry that failed once a
-syllabus already had topics, and the ambiguous model pin — were fixed on
-2026-08-04. Re-extraction is now idempotent, and the model choice is settled
-and guarded. Neither should hold up a deploy.
-
-What remains open (full list in [`status.md`](status.md)) and is worth knowing
-when reading production incidents:
-
-- **Concurrent jobs for the same tutor can still collide on concept
-  creation**, failing one of the two jobs with a 23505. The worker runs
-  `concurrency: 2`, so this needs two extractions running at once for the
-  same tutor. BullMQ retries it, and the retry usually succeeds because the
-  concept now exists.
-- **One failed chunk discards the whole document's results**, so a single
-  transient Gemini error re-pays for every chunk on retry. Watch cost if you
-  see repeated failures on large PDFs.
+- **A redeploy kills extractions in flight.** They surface as failed after 10
+  minutes and need a Retry. Avoid deploying while a tutor is mid-upload.
+- **One chunk that fails all 3 tries fails the whole document**, and Retry
+  re-pays for every chunk. Watch cost if you see repeated failures on large PDFs.
 
 ---
 
@@ -446,8 +313,6 @@ when reading production incidents:
 2. **No backups configured.** Student work is not recoverable.
 3. **Storage objects are never reclaimed.** Deleting a material soft-deletes the
    row and deliberately leaves the object. There is no cleanup job yet.
-4. **The extraction worker isn't deployed yet.** Step 9 is written but has not
-   been carried out — there is no Railway project, no production Redis and no
-   `REDIS_URL` in Vercel today. Verified working locally only. The worker also
-   carries known open bugs; see the review findings in [`status.md`](status.md)
-   before putting it in front of real users.
+4. **AI extraction depends on step 9** (Fluid Compute + `GEMINI_API_KEY`).
+   Until then, uploads are saved but read as failed, and presets and manual
+   topic entry still work.

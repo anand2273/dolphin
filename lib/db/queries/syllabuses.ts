@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { concepts, syllabuses, topicConcepts, topics } from "@/lib/db/schema";
+import { withStaleSyllabusAsFailed } from "@/lib/extraction/stale";
 
 export type Syllabus = InferSelectModel<typeof syllabuses>;
 export type Topic = InferSelectModel<typeof topics>;
@@ -15,11 +16,14 @@ export type Concept = InferSelectModel<typeof concepts>;
 
 /** A tutor's own live syllabuses, most recently updated first. */
 export async function listSyllabiForTutor(userId: string): Promise<Syllabus[]> {
-  return db
+  // Each row is read through withStaleSyllabusAsFailed: an extraction whose
+  // function was killed shows as failed (with Retry), not as a forever spinner.
+  const rows = await db
     .select()
     .from(syllabuses)
     .where(and(eq(syllabuses.tutorId, userId), isNull(syllabuses.deletedAt)))
     .orderBy(desc(syllabuses.updatedAt));
+  return rows.map((row) => withStaleSyllabusAsFailed(row));
 }
 
 /**
@@ -42,7 +46,7 @@ export async function getSyllabusForOwner(
       ),
     )
     .limit(1);
-  return syllabus ?? null;
+  return syllabus ? withStaleSyllabusAsFailed(syllabus) : null;
 }
 
 export type TopicWithConcepts = Topic & { concepts: Concept[] };
@@ -82,7 +86,7 @@ export async function listTopicsForSyllabus(
           rows.map((r) => r.id),
         ),
         // A merge tombstones the loser but leaves topic_concepts rows the
-        // worker may have written while the merge was in flight, so without
+        // extraction may have written while the merge was in flight, so without
         // this the page renders a merged-away name for good.
         isNull(concepts.deletedAt),
       ),

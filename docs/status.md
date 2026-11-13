@@ -4,7 +4,7 @@
 with no code behind them yet — that is deliberate (see the forward-compat hooks
 in [`../CLAUDE.md`](../CLAUDE.md)), not an oversight.
 
-Last updated: Question bank slice 1 (extraction to drafts) — 2026-11-11.
+Last updated: In-app extraction (worker and Redis removed) — 2026-11-13.
 
 ---
 
@@ -27,10 +27,11 @@ Last updated: Question bank slice 1 (extraction to drafts) — 2026-11-11.
 | — | Concept deduplication (clustering, cluster review, merge/reject) | Done |
 | — | Question bank — slice 1: extraction to drafts (no UI) | Done |
 | — | Question bank — slices 2–3: review UI, figure-crop confirmation | Not started |
+| — | In-app extraction — `after()` replaces the Railway worker + Redis | Done |
 | CP6 | Assignments and submissions | **Not started** |
 | CP7+ | Everything else in [`future-enhancements.md`](future-enhancements.md) | Not started |
 
-**224 tests, all passing.** The suite is still weighted toward authorization
+**232 tests, all passing.** The suite is still weighted toward authorization
 (including negative cases), with unit coverage added for the pure helpers
 underneath the syllabus-extraction merge/degeneracy logic, concept
 normalisation/clustering, and question handles/merge/answer pairing.
@@ -254,9 +255,10 @@ topics/concepts. Local Redis runs via `pnpm redis:start` (Docker); local
 `.env.local` has a working `GEMINI_API_KEY`.
 
 **Not built**: `classes.syllabus_id` (attaching a syllabus to a class), and
-assignment tagging from a syllabus's topics (still waiting on CP6). Nothing is
-deployed anywhere yet — worker and Redis both run locally only (see known gaps
-below).
+assignment tagging from a syllabus's topics (still waiting on CP6).
+
+*2026-11-13: the queue and worker described in this section are gone — see "In-app
+extraction" below. `worker/*` paths here now live in `lib/extraction/`.*
 
 ### Extraction worker — open findings (review, 2026-08-04)
 
@@ -302,12 +304,13 @@ tutors.)
    `"...Chain rule is a concept" + "Do not promote..."` — no space/period, so
    the model receives `a conceptDo not promote`.
 5. **One failed chunk wastes all the others.** `Promise.all` fails fast, so a
-   single chunk failure discards every successful chunk result and the BullMQ
-   retry re-pays for all the Gemini calls. `Promise.allSettled` + per-chunk
-   retry would bound the cost.
-6. **No graceful shutdown** in `worker/index.ts` — no SIGTERM/SIGINT handler
-   calling `worker.close()`. Safe today (transaction aborts, BullMQ recovers
-   the stalled job) but a drain-then-exit is cheap and standard for Railway.
+   single chunk failure discards every successful chunk result and a Retry
+   re-pays for all the Gemini calls. *Partly addressed 2026-11-13:* each chunk
+   now retries on its own 3 times (`lib/extraction/retry.ts`) before it can
+   fail the document.
+6. ~~**No graceful shutdown** in `worker/index.ts`.~~ **Obsolete (2026-11-13)** —
+   there is no worker process any more. A killed function is handled by the
+   10-minute stale read instead.
 7. ~~**Concept descriptions are silently dropped.**~~ **Resolved — concept-
    dedup work (2026-08-07), adjacent, not required.** `conceptIdFor`'s insert
    now writes `description: description ?? null`; nothing currently reads it
@@ -327,6 +330,30 @@ tutors.)
 
 Minor: topic/concept inserts are sequential N+1 awaits inside the transaction
 (batchable).
+
+## In-app extraction (2026-11-13)
+
+Replaced the BullMQ queue, the standalone `worker/` process on Railway, and
+Upstash Redis with extraction that runs inside the Vercel function handling the
+upload, via `after()`. Prompted by the Railway service going down over billing,
+which left a live syllabus spinning on "Extracting…" forever.
+
+**Exists:**
+- `lib/extraction/` — the former `worker/` modules, unchanged apart from
+  imports, plus `start.ts` (`after()` entry points), `retry.ts` (3 tries per
+  Gemini call) and `stale.ts` (in-flight > 10 min reads as failed).
+- `maxDuration = 300` on `/syllabi` and `/syllabi/[syllabusId]`.
+- `retryQuestionImport` also reopens a stale import, re-checked in SQL.
+- Pipeline scripts run extraction in-process; no worker terminal needed.
+- `tests/extraction.inline.test.ts`; two stale-retry cases in
+  `tests/questions.actions.test.ts`.
+
+**Removed:** `worker/index.ts`, `lib/queue/`, `bullmq`, `ioredis`, the
+`redis:*`/`worker:*` scripts.
+
+**Not verified yet:** an `after()` extraction on a real Vercel deployment.
+Unit tests cover retry and staleness; the processors are unchanged and were
+validated earlier through the scripts.
 
 ## Question bank — slice 1 (extraction to drafts)
 
@@ -480,15 +507,10 @@ Ordered by how much they matter.
    doesn't return you afterwards.
 7. **No email delivery monitoring.** A failed invitation is discovered by the
    student not turning up.
-8. **The syllabus-extraction worker isn't deployed anywhere.** Verified
-   working end-to-end locally (`pnpm worker:dev` + `pnpm redis:start` +
-   a real `GEMINI_API_KEY` in `.env.local`), but there's no Railway (or
-   equivalent) service, no production Redis, and no `GEMINI_API_KEY` in any
-   deployed environment yet. The runbook for doing it is written up as
-   [`deploy.md`](deploy.md) §9 (one Railway project holding both Redis and the
-   worker), including the `REDIS_URL` the Next app needs as the queue's
-   producer — which is Railway's *public* proxy URL, not the private one the
-   worker uses.
+8. **Live extraction needs two Vercel settings** — Fluid Compute on and
+   `GEMINI_API_KEY` set ([`deploy.md`](deploy.md) §9). The Railway worker it
+   used to need was deployed at some point and went down over billing on
+   2026-11-13, which is what prompted moving extraction in-app.
 9. ~~**No Syllabi tab UI.**~~ **Retired — was already stale.** This gap
    described a state that no longer matched the code by the time the
    concept-dedup work started: `app/(tutor)/syllabi/` (list, detail,
@@ -512,9 +534,10 @@ Ordered by how much they matter.
     test. This is the same gap the design doc's Testing section called out
     and it was not closed by this work.
 12. **Question extraction: one real paper validated, gaps remain.** See the
-    slice-1 section above. Open: (a) a job killed mid-run (worker restart past
-    BullMQ's stalled limit) leaves its import stuck at `processing`, and
-    `retryQuestionImport` only reopens `failed`; (b) the Gemini call has no
+    slice-1 section above. Open: ~~(a) a job killed mid-run is stuck at
+    `processing`~~ (closed 2026-11-13: stale imports can be retried); (b) the Gemini call has no
     request timeout, so a stalled connection hangs an attempt; (c) the topic
-    extractor has the same uncapped-thinking exposure. Cloud: migration `0004`
-    and the `question-documents` bucket are not applied/created there yet.
+    extractor has the same uncapped-thinking exposure. (b) matters more now: a
+    hung call holds the Vercel function until its 300s cap, and the run shows as
+    failed only after the 10-minute stale cutoff. Cloud: migration `0004` and the
+    `question-documents` bucket were applied/created 2026-11-13.

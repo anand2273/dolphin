@@ -15,7 +15,8 @@ import {
 import { QUESTION_DOCUMENTS_BUCKET } from "@/lib/storage/config";
 import { createSignedDownloadUrl } from "@/lib/storage/objects";
 import { NO_TOPICS_MESSAGE } from "@/lib/validation/question";
-import type { QuestionExtractionJob } from "@/lib/queue/question-extraction";
+import type { QuestionExtractionJob } from "./start";
+import { withRetry } from "./retry";
 import { chunkPdfByPages } from "./pdf-chunk";
 import { extractQuestions } from "./gemini-extract-questions";
 import {
@@ -56,9 +57,9 @@ export async function loadSyllabusVocabulary(syllabusId: string): Promise<Syllab
 }
 
 /**
- * Consumer side. Trusts only the import id from the payload; tutor, syllabus
+ * Runs one question import (started by start.ts). Trusts only the import id; tutor, syllabus
  * and document are all re-read from that row. Everything lands as a DRAFT:
- * the tutor approves (slice 2), never this worker.
+ * the tutor approves (slice 2), never this code.
  */
 export async function processQuestionExtraction(job: QuestionExtractionJob): Promise<void> {
   const { importId } = job;
@@ -68,7 +69,7 @@ export async function processQuestionExtraction(job: QuestionExtractionJob): Pro
     .from(questionImports)
     .where(and(eq(questionImports.id, importId), isNull(questionImports.deletedAt)))
     .limit(1);
-  if (!imp) return; // deleted since enqueue: nothing to do, nothing worth retrying
+  if (!imp) return; // deleted since it was started: nothing to do, nothing worth retrying
   if (imp.status === "done") return; // redelivered after commit
 
   // Every status write outside the write transaction is conditional on not
@@ -114,14 +115,17 @@ export async function processQuestionExtraction(job: QuestionExtractionJob): Pro
     if (!response.ok) throw new Error(`Could not fetch the source document (${response.status})`);
     const chunks = await chunkPdfByPages(await response.arrayBuffer());
 
-    // Uncapped concurrency, as topic extraction: paid-tier key. Revisit on 429s.
+    // Uncapped concurrency, as topic extraction: paid-tier key. 429s are retried
+    // per chunk by withRetry; add a cap here if they start exhausting it.
     const results = await Promise.all(
       chunks.map((c) =>
-        extractQuestions({
-          fileBytes: c.fileBytes,
-          pageRange: { startPage: c.startPage, endPage: c.endPage, totalPages: c.totalPages },
-          handles,
-        }),
+        withRetry(() =>
+          extractQuestions({
+            fileBytes: c.fileBytes,
+            pageRange: { startPage: c.startPage, endPage: c.endPage, totalPages: c.totalPages },
+            handles,
+          }),
+        ),
       ),
     );
     const { questions: merged, unpairedAnswers } = mergeQuestionChunks(
@@ -241,6 +245,6 @@ export async function processQuestionExtraction(job: QuestionExtractionJob): Pro
       .update(questionImports)
       .set({ status: "failed", error: message, updatedAt: new Date() })
       .where(notDone);
-    throw error; // BullMQ's retry/backoff decides what happens next
+    throw error; // already recorded on the row; rethrown so start.ts logs it
   }
 }

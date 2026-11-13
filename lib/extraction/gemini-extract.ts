@@ -1,8 +1,9 @@
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType, type GenerationConfig } from "@google/generative-ai";
+import { describeUnfinished } from "./gemini-extract-questions";
 import { z } from "zod";
 
 /**
- * The only place this worker talks to Gemini. Structured/JSON-schema output
+ * The only place syllabus extraction talks to Gemini. Structured/JSON-schema output
  * mode is used so the model's response is a shape we can validate, not prose
  * we have to parse heuristically.
  *
@@ -188,7 +189,7 @@ export function isDegenerate(result: SyllabusExtractionResult): boolean {
  * Note this only actually applies to concepts today: `extractionResultSchema`
  * carries `.max(MAX_TOPICS)` on the topics array, so a result with more than
  * MAX_TOPICS topics fails `safeParse` and throws before it ever reaches here.
- * The topics slice below is defensive only. See the worker extraction tests.
+ * The topics slice below is defensive only. See tests/worker.extraction.test.ts.
  */
 export function truncate(
   result: SyllabusExtractionResult,
@@ -280,7 +281,7 @@ export async function extractTopicsAndConcepts(input: {
   mimeType: string;
   /**
    * Present when this call is one structural chunk of a larger document
-   * (see worker/pdf-chunk.ts). Tightens the prompt to refuse inference
+   * (see pdf-chunk.ts). Tightens the prompt to refuse inference
    * beyond what this excerpt explicitly states, and gives the model the
    * page range so it doesn't mistake a mid-document excerpt for the whole
    * syllabus.
@@ -299,10 +300,15 @@ export async function extractTopicsAndConcepts(input: {
       // A hard ceiling against the repetition-loop failure mode described
       // above — bounds worst-case latency/cost even when it happens.
       maxOutputTokens: 8192,
+      // Load-bearing, same as question extraction (CLAUDE.md): this is a
+      // reasoning model and hidden thinking is billed against maxOutputTokens.
+      // Uncapped, a real syllabus chunk hit MAX_TOKENS on every attempt
+      // (2026-11-13). SDK 0.21 doesn't type thinkingConfig, hence the cast.
+      thinkingConfig: { thinkingBudget: 1024 },
       // 0, not 0.2: chunks are merged downstream by name, so the same heading
       // seen in two chunks must produce the same string both times.
       temperature: 0,
-    },
+    } as GenerationConfig,
   });
 
   const base64 = Buffer.from(input.fileBytes).toString("base64");
@@ -324,9 +330,9 @@ export async function extractTopicsAndConcepts(input: {
 
   const finishReason = candidate.finishReason;
   if (finishReason && finishReason !== "STOP") {
-    // MAX_TOKENS here almost always means the repetition loop; the JSON will
-    // be truncated mid-string and fail to parse anyway.
-    throw new Error(`Gemini did not finish cleanly (${finishReason})`);
+    // The token split tells thinking-ate-the-budget, a repetition loop and
+    // genuinely long output apart. Read it before raising any limit.
+    throw new Error(describeUnfinished(finishReason, result.response.usageMetadata));
   }
 
   const text = result.response.text();

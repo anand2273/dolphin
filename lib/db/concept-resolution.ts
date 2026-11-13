@@ -7,9 +7,9 @@ import { concepts } from "./schema";
  * when nothing already stands for that name.
  *
  * Lives in lib/ because both writers of concepts need it and they cannot see
- * each other: the extraction worker (worker/process-syllabus-extraction.ts)
- * and the preset deep-copy (app/(tutor)/syllabi/actions.ts). worker/ may
- * import from lib/ but never from app/, so lib/ is the only shareable home.
+ * each other: syllabus extraction (lib/extraction/process-syllabus-extraction.ts)
+ * and the preset deep-copy (app/(tutor)/syllabi/actions.ts). Neither may
+ * import from app/'s actions module, so lib/ is the only shareable home.
  * A second, subtly different copy of this logic is exactly how the preset path
  * ended up defeating the merge tombstone.
  *
@@ -86,9 +86,9 @@ export function createConceptResolver(tx: DbOrTx, tutorId: string): ConceptResol
     }
 
     // 3. Create. onConflictDoNothing + re-select rather than a bare insert:
-    // the worker runs concurrency 2, so two jobs for one tutor can both
+    // extractions run concurrently, so two runs for one tutor can both
     // miss the select above and collide on the unique index (23505), which
-    // aborts the whole transaction and fails a job that has already paid
+    // aborts the whole transaction and fails a run that has already paid
     // for every Gemini call in the document.
     const [created] = await tx
       .insert(concepts)

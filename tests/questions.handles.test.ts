@@ -5,7 +5,7 @@ import {
   resolveConceptRefs,
   resolveTopicRef,
   type SyllabusVocabulary,
-} from "@/worker/question-handles";
+} from "@/lib/extraction/question-handles";
 import {
   MAX_PARTS_PER_QUESTION,
   buildQuestionResponseSchema,
@@ -13,7 +13,7 @@ import {
   makeQuestionChunkSchema,
   truncateQuestions,
   type QuestionChunkResult,
-} from "@/worker/question-schema";
+} from "@/lib/extraction/question-schema";
 
 const vocab: SyllabusVocabulary = {
   topics: [

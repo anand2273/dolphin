@@ -27,6 +27,11 @@ import {
   retrySyllabusExtraction,
 } from "./actions";
 
+// Server Actions on this page start extractions with after() (see
+// lib/extraction/start.ts); this is how long that background work may run.
+// Requires Fluid Compute on the Vercel project (Hobby without it caps at 60s).
+export const maxDuration = 300;
+
 export default async function SyllabusPage({
   params,
   searchParams,

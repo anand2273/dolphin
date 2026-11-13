@@ -7,6 +7,7 @@ import {
   IDENTITY_HEADER_USER_ID,
 } from "@/lib/auth/identity-headers";
 import { NO_TOPICS_MESSAGE } from "@/lib/validation/question";
+import { STALE_AFTER_MS } from "@/lib/extraction/stale";
 import {
   createTestSyllabus,
   createTestUser,
@@ -28,14 +29,14 @@ vi.mock("next/headers", () => ({
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 
-// Storage and queue are the side effects whose ABSENCE the negatives prove.
+// Storage and extraction start are the side effects whose ABSENCE the negatives prove.
 // vi.hoisted: vi.mock factories are hoisted above ordinary declarations.
-const { createSignedUploadUrl, statObject, removeObject, enqueueQuestionExtraction } = vi.hoisted(
+const { createSignedUploadUrl, statObject, removeObject, startQuestionExtraction } = vi.hoisted(
   () => ({
     createSignedUploadUrl: vi.fn(async () => ({ signedUrl: "http://u", token: "t", expiresInSeconds: 120 })),
     statObject: vi.fn(),
     removeObject: vi.fn(async () => {}),
-    enqueueQuestionExtraction: vi.fn(async () => {}),
+    startQuestionExtraction: vi.fn(),
   }),
 );
 vi.mock("@/lib/storage/objects", async (orig) => ({
@@ -44,7 +45,7 @@ vi.mock("@/lib/storage/objects", async (orig) => ({
   statObject,
   removeObject,
 }));
-vi.mock("@/lib/queue/question-extraction", () => ({ enqueueQuestionExtraction }));
+vi.mock("@/lib/extraction/start", () => ({ startQuestionExtraction }));
 
 const { requestQuestionImportUpload, confirmQuestionImportUpload, retryQuestionImport } =
   await import("@/app/(tutor)/syllabi/[syllabusId]/questions/actions");
@@ -119,7 +120,7 @@ describe("question import actions", () => {
       expect(imp.status).toBe("pending");
       const [att] = await db.select().from(attachments).where(eq(attachments.id, imp.sourceAttachmentId));
       expect(att.sizeBytes).toBe(4321); // stat, not the client's claim
-      expect(enqueueQuestionExtraction).toHaveBeenCalledWith({ importId: imp.id });
+      expect(startQuestionExtraction).toHaveBeenCalledWith({ importId: imp.id });
     });
 
     it("REFUSES a rival tutor before touching storage", async () => {
@@ -127,7 +128,7 @@ describe("question import actions", () => {
       const r = await confirmQuestionImportUpload({ syllabusId: syllabusA, objectKey: KEY, filename: "p.pdf" });
       expect(r).toEqual({ error: "Not authorized" });
       expect(statObject).not.toHaveBeenCalled();
-      expect(enqueueQuestionExtraction).not.toHaveBeenCalled();
+      expect(startQuestionExtraction).not.toHaveBeenCalled();
     });
 
     it("deletes an object that is not really a PDF and writes no rows", async () => {
@@ -141,24 +142,14 @@ describe("question import actions", () => {
       expect(after).toHaveLength(before.length);
     });
 
-    it("lands a queue outage on the import as a readable failure instead of throwing", async () => {
-      viewer = tutorA;
-      statObject.mockResolvedValue({ sizeBytes: 10, mimeType: "application/pdf" });
-      enqueueQuestionExtraction.mockRejectedValueOnce(new Error("connect ECONNREFUSED"));
-      const key2 = KEY.replace(/^1/, "3");
-      const r = await confirmQuestionImportUpload({ syllabusId: syllabusA, objectKey: key2, filename: "p.pdf" });
-      expect(r).toEqual({ ok: true });
-      const rows = await db.select().from(questionImports).where(eq(questionImports.syllabusId, syllabusA));
-      expect(rows.some((x) => x.status === "failed" && x.error?.includes("Could not queue"))).toBe(true);
-    });
   });
 
   describe("retryQuestionImport", () => {
-    it("re-enqueues a failed import for its owner", async () => {
+    it("re-runs a failed import for its owner", async () => {
       viewer = tutorA;
       const { importId } = await insertImport(tutorA.id, syllabusA, "failed");
       await retryQuestionImport(importId);
-      expect(enqueueQuestionExtraction).toHaveBeenCalledWith({ importId });
+      expect(startQuestionExtraction).toHaveBeenCalledWith({ importId });
       const [imp] = await db.select().from(questionImports).where(eq(questionImports.id, importId));
       expect(imp.status).toBe("pending");
     });
@@ -167,7 +158,7 @@ describe("question import actions", () => {
       const { importId } = await insertImport(tutorA.id, syllabusA, "failed");
       viewer = tutorB;
       await retryQuestionImport(importId);
-      expect(enqueueQuestionExtraction).not.toHaveBeenCalled();
+      expect(startQuestionExtraction).not.toHaveBeenCalled();
       const [imp] = await db.select().from(questionImports).where(eq(questionImports.id, importId));
       expect(imp.status).toBe("failed");
     });
@@ -176,7 +167,29 @@ describe("question import actions", () => {
       viewer = tutorA;
       const { importId } = await insertImport(tutorA.id, syllabusA, "done");
       await retryQuestionImport(importId);
-      expect(enqueueQuestionExtraction).not.toHaveBeenCalled();
+      expect(startQuestionExtraction).not.toHaveBeenCalled();
+    });
+
+    it("re-runs an import stuck in processing past the stale cutoff", async () => {
+      viewer = tutorA;
+      const { importId } = await insertImport(tutorA.id, syllabusA, "processing");
+      await db
+        .update(questionImports)
+        .set({ updatedAt: new Date(Date.now() - STALE_AFTER_MS - 60_000) })
+        .where(eq(questionImports.id, importId));
+      await retryQuestionImport(importId);
+      expect(startQuestionExtraction).toHaveBeenCalledWith({ importId });
+      const [imp] = await db.select().from(questionImports).where(eq(questionImports.id, importId));
+      expect(imp.status).toBe("pending");
+    });
+
+    it("does not re-run an import that is still genuinely in flight", async () => {
+      viewer = tutorA;
+      const { importId } = await insertImport(tutorA.id, syllabusA, "processing");
+      await retryQuestionImport(importId);
+      expect(startQuestionExtraction).not.toHaveBeenCalled();
+      const [imp] = await db.select().from(questionImports).where(eq(questionImports.id, importId));
+      expect(imp.status).toBe("processing");
     });
   });
 });

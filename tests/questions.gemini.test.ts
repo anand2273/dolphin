@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeUnfinished } from "@/worker/gemini-extract-questions";
+import { describeUnfinished } from "@/lib/extraction/gemini-extract-questions";
 
 /**
  * A MAX_TOKENS finish has three different causes with three different fixes
@@ -37,7 +37,7 @@ describe("QUESTION_GENERATION_CONFIG", () => {
    * attempt ended MAX_TOKENS. Thinking shares maxOutputTokens with the answer.
    */
   it("caps thinking so most of the output budget is left for the transcription", async () => {
-    const { QUESTION_GENERATION_CONFIG } = await import("@/worker/gemini-extract-questions");
+    const { QUESTION_GENERATION_CONFIG } = await import("@/lib/extraction/gemini-extract-questions");
     const budget = QUESTION_GENERATION_CONFIG.thinkingConfig.thinkingBudget;
     expect(budget).toBeGreaterThanOrEqual(0);
     expect(QUESTION_GENERATION_CONFIG.maxOutputTokens - budget).toBeGreaterThanOrEqual(12_000);

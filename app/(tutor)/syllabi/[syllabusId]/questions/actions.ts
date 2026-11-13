@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { attachments, questionImports, topics } from "@/lib/db/schema";
 import { requireAuthUser } from "@/lib/auth/session";
@@ -24,13 +24,14 @@ import {
   removeObject,
   statObject,
 } from "@/lib/storage/objects";
-import { enqueueQuestionExtraction } from "@/lib/queue/question-extraction";
+import { startQuestionExtraction } from "@/lib/extraction/start";
+import { isStale, STALE_AFTER_MS } from "@/lib/extraction/stale";
 import type { UploadTicket } from "@/app/(tutor)/syllabi/actions";
 import type { FormState } from "@/lib/types";
 
 /**
  * Question import: request (authorize, mint URL) -> browser PUTs bytes ->
- * confirm (authorize, re-stat, write rows, enqueue). Same three-step shape as
+ * confirm (authorize, re-stat, write rows, start extraction). Same three-step shape as
  * syllabus documents and materials. Ownership of the SYLLABUS is the gate at
  * every step; the bank is tutor-private.
  */
@@ -60,7 +61,7 @@ export async function requestQuestionImportUpload(input: {
   }
 
   // Refused up front so the tutor doesn't upload 25 MB to learn this from a
-  // failed job. The worker re-checks: topics can be deleted in between.
+  // failed job. Extraction re-checks: topics can be deleted in between.
   const [anyTopic] = await db
     .select({ id: topics.id })
     .from(topics)
@@ -140,25 +141,18 @@ export async function confirmQuestionImportUpload(input: {
     return { error: "Could not save that upload. Please try again." };
   }
 
-  // After commit, and never thrown, for the reasons in confirmSyllabusDocumentUpload.
-  try {
-    await enqueueQuestionExtraction({ importId });
-  } catch (e) {
-    await db
-      .update(questionImports)
-      .set({
-        status: "failed",
-        error: `Could not queue extraction: ${e instanceof Error ? e.message : "unknown error"}`,
-        updatedAt: new Date(),
-      })
-      .where(eq(questionImports.id, importId));
-  }
+  // After commit, for the reasons in confirmSyllabusDocumentUpload.
+  startQuestionExtraction({ importId });
 
   revalidatePath(`/syllabi/${syllabusId}`);
   return { ok: true };
 }
 
-/** Only a FAILED import re-runs: a done one would duplicate its questions. */
+/**
+ * Only a failed import re-runs — or one stuck in flight past STALE_AFTER_MS,
+ * which is a run whose function was killed (see lib/extraction/stale.ts). A
+ * done one would duplicate its questions.
+ */
 export async function retryQuestionImport(importId: string): Promise<void> {
   const parsed = retryQuestionImportSchema.safeParse(importId);
   if (!parsed.success) return;
@@ -171,30 +165,32 @@ export async function retryQuestionImport(importId: string): Promise<void> {
     if (e instanceof AuthzError) return;
     throw e;
   }
-  if (imp.status !== "failed") return;
+  if (imp.status !== "failed" && !isStale(imp.status, imp.updatedAt)) return;
 
-  // Conditional, not a blind write: between the read above and here a BullMQ
-  // retry of the same import may already have succeeded, and moving a done
-  // import back to pending would re-run it into duplicate questions.
+  // Conditional, not a blind write: between the read above and here another
+  // run of the same import may already have succeeded (a double-clicked
+  // Retry), and moving a done import back to pending would re-run it into
+  // duplicate questions. The same staleness test is repeated in SQL.
+  const staleBefore = new Date(Date.now() - STALE_AFTER_MS);
   const reopened = await db
     .update(questionImports)
     .set({ status: "pending", error: null, updatedAt: new Date() })
-    .where(and(eq(questionImports.id, imp.id), eq(questionImports.status, "failed")))
+    .where(
+      and(
+        eq(questionImports.id, imp.id),
+        or(
+          eq(questionImports.status, "failed"),
+          and(
+            inArray(questionImports.status, ["pending", "processing"]),
+            lt(questionImports.updatedAt, staleBefore),
+          ),
+        ),
+      ),
+    )
     .returning({ id: questionImports.id });
   if (!reopened.length) return;
 
-  try {
-    await enqueueQuestionExtraction({ importId: imp.id });
-  } catch (e) {
-    await db
-      .update(questionImports)
-      .set({
-        status: "failed",
-        error: `Could not queue extraction: ${e instanceof Error ? e.message : "unknown error"}`,
-        updatedAt: new Date(),
-      })
-      .where(eq(questionImports.id, imp.id));
-  }
+  startQuestionExtraction({ importId: imp.id });
 
   revalidatePath(`/syllabi/${imp.syllabusId}`);
 }
