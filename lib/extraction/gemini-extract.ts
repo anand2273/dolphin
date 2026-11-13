@@ -2,7 +2,7 @@ import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { z } from "zod";
 
 /**
- * The only place this worker talks to Gemini. Structured/JSON-schema output
+ * The only place syllabus extraction talks to Gemini. Structured/JSON-schema output
  * mode is used so the model's response is a shape we can validate, not prose
  * we have to parse heuristically.
  *
@@ -188,7 +188,7 @@ export function isDegenerate(result: SyllabusExtractionResult): boolean {
  * Note this only actually applies to concepts today: `extractionResultSchema`
  * carries `.max(MAX_TOPICS)` on the topics array, so a result with more than
  * MAX_TOPICS topics fails `safeParse` and throws before it ever reaches here.
- * The topics slice below is defensive only. See the worker extraction tests.
+ * The topics slice below is defensive only. See tests/worker.extraction.test.ts.
  */
 export function truncate(
   result: SyllabusExtractionResult,
@@ -280,7 +280,7 @@ export async function extractTopicsAndConcepts(input: {
   mimeType: string;
   /**
    * Present when this call is one structural chunk of a larger document
-   * (see worker/pdf-chunk.ts). Tightens the prompt to refuse inference
+   * (see pdf-chunk.ts). Tightens the prompt to refuse inference
    * beyond what this excerpt explicitly states, and gives the model the
    * page range so it doesn't mistake a mid-document excerpt for the whole
    * syllabus.

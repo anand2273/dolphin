@@ -6,9 +6,9 @@ import {
 } from "@/lib/storage/config";
 
 /**
- * Shown both by the upload action (refused up front) and by the worker (a job
+ * Shown both by the upload action (refused up front) and by extraction (a job
  * whose syllabus lost its topics before it ran). One string, so the tutor sees
- * the same words either way. Lives in lib/ because app/ must not import worker/.
+ * the same words either way. Lives in lib/ so both app/ and lib/extraction can import it.
  */
 export const NO_TOPICS_MESSAGE =
   "This syllabus has no topics yet. Add topics before importing questions.";

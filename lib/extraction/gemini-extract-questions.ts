@@ -15,7 +15,7 @@ import {
 /**
  * The second (and only other) Gemini purpose in this codebase: transcribe the
  * questions in a tutor-uploaded PDF and tag each against that tutor's syllabus.
- * Never generates, solves or paraphrases. Guards mirror worker/gemini-extract.ts
+ * Never generates, solves or paraphrases. Guards mirror gemini-extract.ts
  * for the same reasons; read its comments before changing any of them.
  *
  * Same model as topic extraction; see gemini-extract.ts on why a floating
@@ -49,7 +49,7 @@ export const QUESTION_GENERATION_CONFIG = {
  * causes apart: hidden thinking eating the budget (cap thinking), a repetition
  * loop (the degeneracy guard's job), or genuinely long output (raise the limit
  * or shrink chunks). It goes into the error so it lands on
- * question_imports.error and the worker log. SDK 0.21 doesn't type
+ * question_imports.error and the Vercel function log. SDK 0.21 doesn't type
  * thoughtsTokenCount though the API returns it; derive it from the total when
  * it's absent.
  */

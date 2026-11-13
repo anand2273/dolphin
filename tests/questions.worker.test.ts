@@ -24,8 +24,8 @@ import {
 // handle mapping, merge, the write transaction) runs for real against the DB.
 // vi.hoisted: vi.mock factories are hoisted above ordinary declarations.
 const { extractQuestions } = vi.hoisted(() => ({ extractQuestions: vi.fn() }));
-vi.mock("@/worker/gemini-extract-questions", () => ({ extractQuestions }));
-vi.mock("@/worker/pdf-chunk", () => ({
+vi.mock("@/lib/extraction/gemini-extract-questions", () => ({ extractQuestions }));
+vi.mock("@/lib/extraction/pdf-chunk", () => ({
   chunkPdfByPages: async () => [
     { fileBytes: new ArrayBuffer(1), startPage: 1, endPage: 3, totalPages: 3 },
   ],
@@ -43,7 +43,7 @@ vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) =>
     : realFetch(input, init),
 );
 
-const { processQuestionExtraction } = await import("@/worker/process-question-extraction");
+const { processQuestionExtraction } = await import("@/lib/extraction/process-question-extraction");
 
 describe("processQuestionExtraction", () => {
   let tutor: TestUser;

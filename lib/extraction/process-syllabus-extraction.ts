@@ -4,7 +4,8 @@ import { createConceptResolver } from "@/lib/db/concept-resolution";
 import { attachments, syllabuses, topicConcepts, topics } from "@/lib/db/schema";
 import { SYLLABUS_DOCUMENTS_BUCKET } from "@/lib/storage/config";
 import { createSignedDownloadUrl } from "@/lib/storage/objects";
-import type { SyllabusExtractionJob } from "@/lib/queue/syllabus-extraction";
+import type { SyllabusExtractionJob } from "./start";
+import { withRetry } from "./retry";
 import { extractTopicsAndConcepts, type SyllabusExtractionResult } from "./gemini-extract";
 import { chunkPdfByPages } from "./pdf-chunk";
 
@@ -50,7 +51,7 @@ export function mergeExtractionResults(
 }
 
 /**
- * The consumer side of the async extraction pipeline. Mirrors
+ * Runs one syllabus extraction (started by start.ts after the upload). Mirrors
  * confirmSyllabusDocumentUpload's never-trust-the-client discipline in spirit:
  * everything written here comes from the actual stored object and the actual
  * model output, never from the job payload beyond the two ids used to look
@@ -103,23 +104,27 @@ export async function processSyllabusExtraction(
       const chunks = await chunkPdfByPages(fileBytes);
       const chunkResults = await Promise.all(
         chunks.map((chunk) =>
-          extractTopicsAndConcepts({
-            fileBytes: chunk.fileBytes,
-            mimeType: PDF_MIME_TYPE,
-            pageRange: {
-              startPage: chunk.startPage,
-              endPage: chunk.endPage,
-              totalPages: chunk.totalPages,
-            },
-          }),
+          withRetry(() =>
+            extractTopicsAndConcepts({
+              fileBytes: chunk.fileBytes,
+              mimeType: PDF_MIME_TYPE,
+              pageRange: {
+                startPage: chunk.startPage,
+                endPage: chunk.endPage,
+                totalPages: chunk.totalPages,
+              },
+            }),
+          ),
         ),
       );
       result = mergeExtractionResults(chunkResults);
     } else {
-      result = await extractTopicsAndConcepts({
-        fileBytes,
-        mimeType: attachment.mimeType,
-      });
+      result = await withRetry(() =>
+        extractTopicsAndConcepts({
+          fileBytes,
+          mimeType: attachment.mimeType,
+        }),
+      );
     }
 
     await db.transaction(async (tx) => {
@@ -204,6 +209,6 @@ export async function processSyllabusExtraction(
       .update(syllabuses)
       .set({ extractionStatus: "failed", extractionError: message, updatedAt: new Date() })
       .where(eq(syllabuses.id, syllabusId));
-    throw error; // rethrow so BullMQ's retry/backoff decides what happens next
+    throw error; // already recorded on the row; rethrown so start.ts logs it
   }
 }

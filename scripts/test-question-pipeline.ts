@@ -1,4 +1,4 @@
-import "../worker/env";
+import "./env";
 
 import { readFile } from "node:fs/promises";
 import { and, asc, eq, isNull } from "drizzle-orm";
@@ -17,7 +17,7 @@ import {
 import { createSupabaseAdminClient } from "@/lib/auth/supabase-admin";
 import { generateObjectKey, removeObject } from "@/lib/storage/objects";
 import { QUESTION_DOCUMENTS_BUCKET } from "@/lib/storage/config";
-import { enqueueQuestionExtraction } from "@/lib/queue/question-extraction";
+import { processQuestionExtraction } from "@/lib/extraction/process-question-extraction";
 
 /**
  * Dev-only harness for question extraction, the counterpart of
@@ -32,7 +32,7 @@ import { enqueueQuestionExtraction } from "@/lib/queue/question-extraction";
  * Refuses to touch anything but a local database: cleanup HARD-deletes, which
  * the soft-delete rule forbids for real data, and seed writes rows as the
  * syllabus's real tutor.
- * Run `pnpm worker:dev` in another terminal to process what this enqueues.
+ * Seeding runs the extraction in-process and prints the drafts when done.
  */
 
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
@@ -84,11 +84,13 @@ async function seed(filePath: string, syllabusId: string) {
     .insert(questionImports)
     .values({ syllabusId, tutorId: syllabus.tutorId, sourceAttachmentId: attachment.id })
     .returning({ id: questionImports.id });
-  await enqueueQuestionExtraction({ importId: imp.id });
-
-  console.log(`Enqueued import ${imp.id} into "${syllabus.title}".
-Next: pnpm worker:dev (other terminal), then
-  pnpm test:question-pipeline --status ${imp.id}`);
+  console.log(`Import ${imp.id} into "${syllabus.title}". Extracting (this can take a minute)…\n`);
+  try {
+    await processQuestionExtraction({ importId: imp.id });
+  } catch {
+    // Recorded on the import; status() below prints it.
+  }
+  await status(imp.id);
 }
 
 async function status(importId: string) {

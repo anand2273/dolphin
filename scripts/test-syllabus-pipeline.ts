@@ -1,4 +1,4 @@
-import "../worker/env";
+import "./env";
 
 import { extname } from "node:path";
 import { readFile } from "node:fs/promises";
@@ -13,13 +13,13 @@ import {
   isAllowedSyllabusDocumentMimeType,
   type SyllabusDocumentMimeType,
 } from "@/lib/storage/config";
-import { enqueueSyllabusExtraction } from "@/lib/queue/syllabus-extraction";
+import { processSyllabusExtraction } from "@/lib/extraction/process-syllabus-extraction";
 
 /**
  * A dev-only harness for exercising the syllabus-extraction pipeline without a
  * UI — there is no Syllabi tab yet, and Server Actions can't be invoked from
  * curl/Postman (they use a Next.js-internal encoding, not plain REST), so this
- * is the intended way to test upload -> enqueue -> worker -> Gemini -> DB
+ * is the intended way to test upload -> extraction -> Gemini -> DB
  * end to end. Reuses one fixed test tutor account across runs rather than
  * creating a new one every time. NOT wired into the app — never imported from
  * app/ or lib/.
@@ -29,9 +29,9 @@ import { enqueueSyllabusExtraction } from "@/lib/queue/syllabus-extraction";
  *   pnpm tsx scripts/test-syllabus-pipeline.ts --status <syllabusId>
  *   pnpm tsx scripts/test-syllabus-pipeline.ts --cleanup
  *
- * After seeding, run `pnpm worker:dev` in another terminal to actually process
- * the job, then re-run with --status <syllabusId> (or use `pnpm db:studio`)
- * to see the result.
+ * Seeding runs the extraction in-process (the same processSyllabusExtraction
+ * the app starts with after()) and prints the result when it finishes;
+ * --status <syllabusId> re-prints it later.
  */
 
 const TEST_TUTOR_EMAIL = "syllabus-pipeline-test@test.local";
@@ -108,15 +108,17 @@ async function seed(filePath: string, title: string) {
     })
     .returning({ id: syllabuses.id });
 
-  await enqueueSyllabusExtraction({ syllabusId: syllabus.id, attachmentId: attachment.id });
-
-  console.log(`Seeded and enqueued.
+  console.log(`Seeded. Extracting (this can take a minute)…
   syllabusId:   ${syllabus.id}
   attachmentId: ${attachment.id}
   tutorId:      ${tutorId}
-
-Next: run \`pnpm worker:dev\` in another terminal, then:
-  pnpm tsx scripts/test-syllabus-pipeline.ts --status ${syllabus.id}`);
+`);
+  try {
+    await processSyllabusExtraction({ syllabusId: syllabus.id, attachmentId: attachment.id });
+  } catch {
+    // Recorded on the row; status() below prints it.
+  }
+  await status(syllabus.id);
 }
 
 async function status(syllabusId: string) {

@@ -6,8 +6,8 @@ import {
   normaliseQuestionLabel,
   normaliseSection,
   type ChunkInput,
-} from "@/worker/merge-questions";
-import type { QuestionChunkResult } from "@/worker/question-schema";
+} from "@/lib/extraction/merge-questions";
+import type { QuestionChunkResult } from "@/lib/extraction/question-schema";
 
 type Q = QuestionChunkResult["questions"][number];
 type A = QuestionChunkResult["answers"][number];

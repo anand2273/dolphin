@@ -26,7 +26,7 @@ import {
   removeObject,
   statObject,
 } from "@/lib/storage/objects";
-import { enqueueSyllabusExtraction } from "@/lib/queue/syllabus-extraction";
+import { startSyllabusExtraction } from "@/lib/extraction/start";
 import { getSyllabusPreset } from "@/lib/syllabus-presets";
 import type { FormState } from "@/lib/types";
 
@@ -131,7 +131,7 @@ export async function createSyllabusFromPreset(
 
     // Concepts are tutor-scoped and may already exist from a previous preset or
     // upload; reuse rather than creating a duplicate under the same name. This
-    // is the SAME resolver the extraction worker uses — a preset copy that
+    // is the SAME resolver syllabus extraction uses — a preset copy that
     // recreated a merged-away name would re-propose a merge the tutor already
     // made, and this path used to have its own case-sensitive copy that did
     // exactly that.
@@ -218,7 +218,7 @@ export async function requestSyllabusDocumentUpload(input: {
 /**
  * Step 3 of 3 (the browser does step 2): verify what ACTUALLY landed, write the
  * attachment + syllabus rows atomically with extraction_status="pending", then
- * enqueue the async extraction job. The worker (not this action) does the
+ * start the background extraction (lib/extraction/start.ts), which does the
  * Gemini call and writes topics/concepts once it completes.
  */
 export async function confirmSyllabusDocumentUpload(input: {
@@ -290,31 +290,11 @@ export async function confirmSyllabusDocumentUpload(input: {
     return { syllabusId: syllabus.id, attachmentId: attachment.id };
   });
 
-  // Enqueue only after the transaction has committed — otherwise the worker
-  // could pick up the job before the row is visible, or chase a syllabus that
-  // never ends up existing if something above rolled back.
-  //
-  // A failure here must not throw: the document is uploaded and the syllabus
-  // row exists, so the work is not lost — only the *queueing* failed. Throwing
-  // rejects the action, which leaves the upload dialog stuck on "saving" with
-  // no message (the client cannot distinguish a rejection from a pending
-  // promise). Record it as a failed extraction instead so the syllabus page
-  // shows the real reason and `retrySyllabusExtraction` can re-enqueue it once
-  // REDIS_URL is fixed.
-  try {
-    await enqueueSyllabusExtraction({ syllabusId, attachmentId });
-  } catch (e) {
-    await db
-      .update(syllabuses)
-      .set({
-        extractionStatus: "failed",
-        extractionError: `Could not queue extraction: ${
-          e instanceof Error ? e.message : "unknown error"
-        }`,
-        updatedAt: new Date(),
-      })
-      .where(eq(syllabuses.id, syllabusId));
-  }
+  // Started only after the transaction has committed, so the extraction never
+  // reads a row that isn't visible yet or that rolled back. It runs after this
+  // action has responded (see lib/extraction/start.ts); failures land on the
+  // row as `failed`, never as a rejected action.
+  startSyllabusExtraction({ syllabusId, attachmentId });
 
   revalidatePath("/syllabi");
   revalidatePath(`/syllabi/${syllabusId}`);

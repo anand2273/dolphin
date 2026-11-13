@@ -4,7 +4,7 @@ import { NO_TOPIC, type QuestionHandles } from "./question-handles";
 
 /**
  * Two instruction channels reach the model, the responseSchema descriptions
- * and the prompt, and they must agree (worker/gemini-extract.ts learned this:
+ * and the prompt, and they must agree (gemini-extract.ts learned this:
  * where they disagree, the schema wins). Caps here are generous and TRUNCATE;
  * isDegenerateQuestions is what rejects a repetition loop. Same split as the
  * topic extractor, for the same reason.

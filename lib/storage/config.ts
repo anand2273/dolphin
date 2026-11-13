@@ -49,8 +49,8 @@ export const ACCEPT_ATTRIBUTE = ALLOWED_MIME_TYPES.join(",");
 
 /**
  * Private bucket for tutor-uploaded syllabus source documents (what the async
- * extraction worker reads from). Separate from `materials` — this bucket holds
- * curriculum documents, not session files, and only the extraction worker and
+ * extraction reads from). Separate from `materials` — this bucket holds
+ * curriculum documents, not session files, and only extraction and
  * the owning tutor ever read from it.
  */
 export const SYLLABUS_DOCUMENTS_BUCKET = "syllabus-documents";

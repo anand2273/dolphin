@@ -1,6 +1,6 @@
 "use client";
 // Client Component, renders nothing: while extraction is in flight it polls
-// router.refresh() so the (server-rendered) detail page picks up the worker's
+// router.refresh() so the (server-rendered) detail page picks up the extraction's
 // eventual done/failed write. There's no dedicated status endpoint to
 // subscribe to — this just re-fetches the same query the page already runs.
 
