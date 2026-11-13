@@ -316,8 +316,9 @@ Design and rationale:
   tutorial spent 15727 of 16384 tokens thinking and left 643 for the answer —
   `MAX_TOKENS` on every attempt. A non-STOP finish now puts the
   answer/thinking/prompt token split in the error; read it before raising any
-  limit. *`lib/extraction/gemini-extract.ts` (topics, 8192 cap) uses the same model
-  with thinking uncapped and is exposed to the same failure.*
+  limit. *`lib/extraction/gemini-extract.ts` (topics, 8192 cap) hit exactly this on a
+  real syllabus on 2026-11-13 — MAX_TOKENS on all 3 attempts — and now carries
+  the same 1024 cap. MAX_TOKENS is no longer retried: it reproduces every time.*
 - **Section headings carry forward across chunks.** A chunk that starts past
   a heading never sees it; without carry-forward the overlap copy of a
   question keyed differently and survived as a duplicate.

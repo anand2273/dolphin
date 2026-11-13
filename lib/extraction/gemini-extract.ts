@@ -1,4 +1,5 @@
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType, type GenerationConfig } from "@google/generative-ai";
+import { describeUnfinished } from "./gemini-extract-questions";
 import { z } from "zod";
 
 /**
@@ -299,10 +300,15 @@ export async function extractTopicsAndConcepts(input: {
       // A hard ceiling against the repetition-loop failure mode described
       // above — bounds worst-case latency/cost even when it happens.
       maxOutputTokens: 8192,
+      // Load-bearing, same as question extraction (CLAUDE.md): this is a
+      // reasoning model and hidden thinking is billed against maxOutputTokens.
+      // Uncapped, a real syllabus chunk hit MAX_TOKENS on every attempt
+      // (2026-11-13). SDK 0.21 doesn't type thinkingConfig, hence the cast.
+      thinkingConfig: { thinkingBudget: 1024 },
       // 0, not 0.2: chunks are merged downstream by name, so the same heading
       // seen in two chunks must produce the same string both times.
       temperature: 0,
-    },
+    } as GenerationConfig,
   });
 
   const base64 = Buffer.from(input.fileBytes).toString("base64");
@@ -324,9 +330,9 @@ export async function extractTopicsAndConcepts(input: {
 
   const finishReason = candidate.finishReason;
   if (finishReason && finishReason !== "STOP") {
-    // MAX_TOKENS here almost always means the repetition loop; the JSON will
-    // be truncated mid-string and fail to parse anyway.
-    throw new Error(`Gemini did not finish cleanly (${finishReason})`);
+    // The token split tells thinking-ate-the-budget, a repetition loop and
+    // genuinely long output apart. Read it before raising any limit.
+    throw new Error(describeUnfinished(finishReason, result.response.usageMetadata));
   }
 
   const text = result.response.text();

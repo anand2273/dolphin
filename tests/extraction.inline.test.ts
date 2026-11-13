@@ -34,7 +34,11 @@ describe("withRetry", () => {
   });
 
   it("does not retry errors no retry can fix", async () => {
-    for (const message of ["GEMINI_API_KEY is not set", "Gemini blocked the request (SAFETY)"]) {
+    for (const message of [
+      "GEMINI_API_KEY is not set",
+      "Gemini blocked the request (SAFETY)",
+      "Gemini did not finish cleanly (MAX_TOKENS; answer 643, thinking 7549, prompt 2100)",
+    ]) {
       const fn = vi.fn(async () => {
         throw new Error(message);
       });
